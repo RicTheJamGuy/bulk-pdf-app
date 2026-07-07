@@ -12,7 +12,22 @@ import { nanoid } from 'nanoid';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
-app.use(cors());
+
+const allowedOrigins = (process.env.CORS_ORIGIN || '')
+  .split(',')
+  .map((origin) => origin.trim())
+  .filter(Boolean);
+
+if (allowedOrigins.length) {
+  app.use(cors({
+    origin: (origin, callback) => {
+      // Requests without Origin are typically server-to-server or same-origin navigations.
+      if (!origin) return callback(null, true);
+      if (allowedOrigins.includes(origin)) return callback(null, true);
+      return callback(new Error('Origin not allowed by CORS'));
+    }
+  }));
+}
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
@@ -463,6 +478,8 @@ app.get('/api/projects/:id', async (req, res) => {
   res.json(project);
 });
 
-app.listen(3000, () => {
-  console.log('Bulk PDF app running at http://localhost:3000');
+const port = Number(process.env.PORT || 3000);
+
+app.listen(port, () => {
+  console.log(`Bulk PDF app running on port ${port}`);
 });

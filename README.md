@@ -48,6 +48,52 @@ npm start
 
 Open: [http://localhost:3000](http://localhost:3000)
 
+## Deploy On Render (Free Tier)
+
+This project is configured as a single Render Web Service using [render.yaml](render.yaml).
+
+### 1) Push your repo
+
+Push this repository to GitHub (or GitLab) with the current `master` branch.
+
+### 2) Create service from Blueprint
+
+In Render:
+
+1. New -> Blueprint
+2. Select this repository
+3. Confirm the detected service from `render.yaml`
+4. Create service
+
+Render will run:
+
+- Build command: `npm ci`
+- Start command: `npm start`
+- Health check: `/api/health`
+
+### 3) Environment variables
+
+- `NODE_ENV=production` is set in `render.yaml`.
+- `PORT` is injected by Render automatically.
+- `CORS_ORIGIN` is optional.
+  - Leave empty when using the built-in UI served by this same app.
+  - Set it only if you host the frontend on a different domain, for example:
+    - `https://your-frontend.example.com`
+
+Use [.env.example](.env.example) as reference.
+
+### 4) Free-tier storage behavior
+
+This app writes runtime files to:
+
+- `data/uploads/`
+- `output/`
+- `projects/`
+
+On Render free tier, the local filesystem is ephemeral. Generated files and saved project configs can be lost on restart/redeploy.
+
+If you need persistence, move project/output storage to external storage (for example S3, database, or object storage).
+
 ## App Workflow
 
 1. Upload your blank PDF template.
