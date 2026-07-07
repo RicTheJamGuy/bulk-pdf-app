@@ -1,0 +1,506 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Bulk PDF Fill</title>
+  <style>
+    :root {
+      --bg: #0f172a;
+      --panel: #111827;
+      --panel-2: #0b1220;
+      --text: #e5e7eb;
+      --muted: #9ca3af;
+      --accent: #22d3ee;
+      --accent-2: #10b981;
+      --danger: #ef4444;
+      --warn: #f59e0b;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+    }
+    .container {
+      max-width: 1100px;
+      margin: 0 auto;
+      padding: 24px;
+    }
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 18px 24px;
+      border-bottom: 1px solid #1f2937;
+      background: linear-gradient(180deg, rgba(17,24,39,.7), rgba(15,23,42,.4));
+    }
+    header h1 { margin: 0; font-size: 20px; letter-spacing: 0.2px; }
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 12px;
+      border-radius: 999px;
+      background: #0b1220;
+      border: 1px solid #1f2937;
+      color: #d1d5db;
+      font-size: 12px;
+    }
+    .steps {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 12px;
+      margin-top: 18px;
+    }
+    .step {
+      background: var(--panel);
+      border: 1px solid #1f2937;
+      border-radius: 12px;
+      padding: 16px;
+    }
+    .step h3 { margin: 2px 0 8px; font-size: 14px; color: #cbd5e1; }
+    .step p { margin: 0; font-size: 12px; color: var(--muted); }
+    .step .num {
+      display: inline-grid;
+      width: 22px; height: 22px;
+      place-items: center;
+      border-radius: 999px;
+      background: #0b1220;
+      border: 1px solid #1f2937;
+      color: #e5e7eb;
+      font-weight: 700;
+      font-size: 12px;
+    }
+    .divider {
+      height: 1px;
+      background: #1f2937;
+      margin: 18px 0;
+    }
+    .panel {
+      background: var(--panel);
+      border: 1px solid #1f2937;
+      border-radius: 12px;
+      padding: 16px;
+    }
+    .panel + .panel { margin-top: 14px; }
+    .panel h2 { margin: 0 0 10px; font-size: 16px; color: #cbd5e1; }
+    .row { display: flex; gap: 12px; flex-wrap: wrap; }
+    .col { flex: 1 1 280px; }
+    input[type="file"], select, input[type="text"] {
+      width: 100%;
+      background: #0b1220;
+      color: #e5e7eb;
+      border: 1px solid #1f2937;
+      border-radius: 8px;
+      padding: 10px 12px;
+    }
+    button, .button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      padding: 10px 14px;
+      border-radius: 8px;
+      border: 1px solid #1f2937;
+      background: linear-gradient(180deg, #122234, #0f172a);
+      color: #e5e7eb;
+      cursor: pointer;
+      font-size: 13px;
+    }
+    button.primary {
+      background: linear-gradient(180deg, #0e7490, #0b556b);
+      border-color: #0e7490;
+      color: #ecfeff;
+      font-weight: 700;
+    }
+    button.success {
+      background: linear-gradient(180deg, #059669, #064e3b);
+      border-color: #059669;
+      color: #ecfdf5;
+      font-weight: 700;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 10px;
+      font-size: 13px;
+    }
+    th, td {
+      text-align: left;
+      padding: 8px 10px;
+      border-bottom: 1px solid #1f2937;
+      color: #d1d5db;
+    }
+    th { color: #9ca3af; font-weight: 600; }
+    .tag {
+      display: inline-block;
+      padding: 3px 8px;
+      border-radius: 999px;
+      font-size: 11px;
+      font-weight: 700;
+    }
+    .tag-auto { background: rgba(16,185,129,.15); color: #6ee7b7; border: 1px solid #065f46; }
+    .tag-suggest { background: rgba(245,158,11,.12); color: #fcd34d; border: 1px solid #92400e; }
+    .tag-weak { background: rgba(239,68,68,.12); color: #fca5a5; border: 1px solid #7f1d1d; }
+    .muted { color: var(--muted); font-size: 12px; }
+    .empty { color: #6b7280; font-size: 13px; }
+    .progress { height: 8px; background: #0b1220; border: 1px solid #1f2937; border-radius: 999px; overflow: hidden; }
+    .progress > div { height: 100%; background: linear-gradient(90deg, #06b6d4, #10b981); width: 0%; transition: width .2s; }
+    .toast {
+      position: fixed;
+      right: 16px;
+      bottom: 16px;
+      background: #0b1220;
+      border: 1px solid #1f2937;
+      color: #e5e7eb;
+      padding: 10px 14px;
+      border-radius: 10px;
+      font-size: 13px;
+      box-shadow: 0 10px 30px rgba(0,0,0,.4);
+      z-index: 1000;
+      display: none;
+    }
+    .thumb {
+      width: 100%;
+      max-height: 180px;
+      object-fit: contain;
+      border: 1px solid #1f2937;
+      border-radius: 8px;
+      background: #0b1220;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>Bulk PDF Fill</h1>
+      <div class="pill">v1 <span style="color:#6b7280;">•</span> <span id="statusText">Ready</span></div>
+    </header>
+
+    <div class="steps">
+      <div class="step"><div><span class="num">1</span></div><h3>Template</h3><p>Upload the blank PDF form.</p></div>
+      <div class="step"><div><span class="num">2</span></div><h3>Data</h3><p>Upload CSV, Excel, or JSON.</p></div>
+      <div class="step"><div><span class="num">3</span></div><h3>Map</h3><p>Match columns to PDF fields.</p></div>
+      <div class="step"><div><span class="num">4</span></div><h3>Export</h3><p>Preview and download ZIP.</p></div>
+    </div>
+
+    <div class="divider"></div>
+
+    <!-- Step 1 -->
+    <section class="panel" id="step1">
+      <h2>Step 1 — Upload PDF template</h2>
+      <input type="file" id="pdfInput" accept="application/pdf" />
+      <div id="pdfPreview" style="margin-top:10px; display:none;">
+        <p class="muted" id="pdfFilename"></p>
+        <img id="pdfThumb" class="thumb" alt="PDF preview" />
+        <p class="muted" id="pdfFieldCount"></p>
+      </div>
+    </section>
+
+    <!-- Step 2 -->
+    <section class="panel" id="step2" style="margin-top:14px;">
+      <h2>Step 2 — Upload data source</h2>
+      <input type="file" id="dataInput" accept=".csv,.xlsx,.xls,.json" />
+      <div id="dataPreview" style="margin-top:10px; display:none;">
+        <p class="muted" id="dataFilename"></p>
+        <p class="muted" id="dataMeta"></p>
+      </div>
+    </section>
+
+    <!-- Step 3 -->
+    <section class="panel" id="step3" style="margin-top:14px;">
+      <h2>Step 3 — Map fields</h2>
+      <div class="row">
+        <div class="col">
+          <button id="suggestBtn" class="primary" disabled>Suggest mapping</button>
+          <button id="acceptAutoBtn" class="success" disabled>Accept auto-matches</button>
+          <input type="text" id="projectName" placeholder="Project name (optional)" style="margin-top:10px;" />
+          <button id="saveProjectBtn" class="button" style="margin-top:10px;" disabled>Save project</button>
+        </div>
+        <div class="col">
+          <button id="aiSuggestBtn" class="button" disabled>AI suggest (optional)</button>
+          <p class="muted" id="aiStatus">Will use dataset names only to propose matches.</p>
+        </div>
+      </div>
+
+      <div style="overflow:auto; margin-top:10px; border:1px solid #1f2937; border-radius:10px;">
+        <table id="mappingTable">
+          <thead>
+            <tr>
+              <th>PDF field</th>
+              <th>Type</th>
+              <th>Source field</th>
+              <th>Match</th>
+              <th>Confidence</th>
+            </tr>
+          </thead>
+          <tbody id="mappingBody"></tbody>
+        </table>
+      </div>
+      <p class="muted" id="mappingSummary" style="margin-top:8px;"></p>
+    </section>
+
+    <!-- Step 4 -->
+    <section class="panel" id="step4" style="margin-top:14px;">
+      <h2>Step 4 — Preview & export</h2>
+      <div class="row">
+        <div class="col">
+          <label class="muted">Filename pattern</label>
+          <input type="text" id="filenameTemplate" value="{rowIndex}.pdf" placeholder="{client_name}_{form_type}.pdf" />
+          <p class="muted">Use <code>{field_name}</code> placeholders from your data. Unknown fields become <code>unknown</code>.</p>
+        </div>
+        <div class="col">
+          <label class="muted">Preview record</label>
+          <input type="number" id="previewRowIndex" value="1" min="1" />
+          <button id="previewBtn" class="button" style="margin-top:8px;" disabled>Preview</button>
+          <button id="exportBtn" class="success" style="margin-top:8px;" disabled>Export ZIP</button>
+        </div>
+      </div>
+      <div id="resultArea" style="margin-top:10px;"></div>
+    </section>
+
+    <div style="height: 40px;"></div>
+  </div>
+
+  <div class="toast" id="toast"></div>
+
+  <script>
+    const API = '';
+    let state = {
+      pdfFile: null,
+      pdfFields: [],
+      dataFile: null,
+      data: { headers: [], rows: [] },
+      suggestions: [],
+      mapping: {},
+    };
+
+    function showToast(msg, ms = 2200) {
+      const el = document.getElementById('toast');
+      el.textContent = msg;
+      el.style.display = 'block';
+      clearTimeout(el._t);
+      el._t = setTimeout(() => { el.style.display = 'none'; }, ms);
+    }
+
+    async function uploadFile(inputId, url, extra = {}) {
+      const input = document.getElementById(inputId);
+      const file = input.files[0];
+      if (!file) return showToast('Choose a file first');
+      const fd = new FormData();
+      fd.append(inputId === 'pdfInput' ? 'pdf' : 'data', file);
+      const res = await fetch(API + url, { method: 'POST', body: fd });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || json.message || 'Upload failed');
+      return { file, json };
+    }
+
+    document.getElementById('pdfInput').addEventListener('change', async () => {
+      try {
+        const { file, json } = await uploadFile('pdfInput', '/api/upload/pdf');
+        state.pdfFile = file;
+        state.pdfFields = json.fields || [];
+        document.getElementById('pdfPreview').style.display = 'block';
+        document.getElementById('pdfFilename').textContent = json.filename;
+        document.getElementById('pdfFieldCount').textContent = `Detected fields: ${state.pdfFields.length}`;
+        if (file) {
+          const url = URL.createObjectURL(file);
+          document.getElementById('pdfThumb').src = url;
+        }
+        updateUIState();
+      } catch (e) { showToast(e.message); }
+    });
+
+    document.getElementById('dataInput').addEventListener('change', async () => {
+      try {
+        const { file, json } = await uploadFile('dataInput', '/api/upload/data');
+        state.dataFile = file;
+        state.data = { headers: json.headers || [], rows: json.sample || [] };
+        document.getElementById('dataPreview').style.display = 'block';
+        document.getElementById('dataFilename').textContent = json.filename;
+        document.getElementById('dataMeta').textContent = `Rows: ${json.rowCount || 0} · Columns: ${(json.headers || []).length}`;
+        updateUIState();
+      } catch (e) { showToast(e.message); }
+    });
+
+    const confidenceTag = (s) => {
+      if (s.reason === 'exact') return `<span class="tag tag-auto">Auto</span>`;
+      if (s.reason === 'fuzzy' || s.reason === 'contains') return `<span class="tag tag-suggest">Suggested</span>`;
+      return `<span class="tag tag-weak">Weak</span>`;
+    };
+    const confidencePct = (s) => Math.round((s.score || 0) * 100) + '%';
+
+    document.getElementById('suggestBtn').addEventListener('click', async () => {
+      try {
+        const res = await fetch(API + '/api/mapping/suggest', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ sourceHeaders: state.data.headers, pdfFields: state.pdfFields })
+        });
+        const json = await res.json();
+        if (!res.ok) throw new Error(json.error || 'Suggestion failed');
+        state.suggestions = json.suggestions || [];
+        renderMapping(state.suggestions);
+        document.getElementById('acceptAutoBtn').disabled = false;
+        updateUIState();
+      } catch (e) { showToast(e.message); }
+    });
+
+    document.getElementById('acceptAutoBtn').addEventListener('click', () => {
+      state.mapping = {};
+      for (const s of state.suggestions) {
+        if (s.reason === 'exact' || s.reason === 'fuzzy' || s.reason === 'pattern') state.mapping[s.target] = s.source;
+      }
+      showToast(`Accepted ${Object.keys(state.mapping).length} matches`);
+      renderMapping(state.suggestions);
+    });
+
+    document.getElementById('previewBtn').addEventListener('click', async () => {
+      if (!state.pdfFile) return showToast('Upload a PDF first');
+      try {
+        const rowIndex = Number(document.getElementById('previewRowIndex').value) || 1;
+        const record = state.data.rows[Math.max(0, rowIndex - 1)] || {};
+        const fd = new FormData();
+        fd.append('pdf', state.pdfFile);
+        fd.append('mapping', JSON.stringify(state.mapping));
+        fd.append('data', JSON.stringify(record));
+        fd.append('rowIndex', String(rowIndex));
+        const res = await fetch(API + '/api/preview', { method: 'POST', body: fd });
+        const json = await res.json();
+        if (!res.ok) throw new Error(json.error || 'Preview failed');
+        const reportRows = (json.fillReport || [])
+          .sort((a, b) => String(a.pdfFieldName).localeCompare(String(b.pdfFieldName)))
+          .map(item => {
+            const name = `${item.sourceKey} → ${item.pdfFieldName}`;
+            const val = escapeHtml(String(item.value ?? ''));
+            const status = item.written
+              ? `<span style="color:#6ee7b7">Filled</span>`
+              : item.error
+                ? `<span style="color:#fca5a5">Missing field</span>`
+                : `<span style="color:#9ca3af">Empty</span>`;
+            return `<tr><td>${escapeHtml(name)}</td><td>${escapeHtml(val) || '<span style="color:#6b7280">—</span>'}</td><td>${status}</td></tr>`;
+          }).join('');
+        document.getElementById('resultArea').innerHTML = `
+          <p class="muted">Preview for row ${rowIndex}</p>
+          <div style="display:grid; grid-template-columns: 1fr; gap:12px;">
+            <div>
+              <div style="max-height:260px; overflow:auto; border:1px solid #1f2937; border-radius:10px;">
+                <table style="width:100%; border-collapse:collapse; font-size:12px;">
+                  <thead>
+                    <tr>
+                      <th style="text-align:left; padding:8px 10px; color:#9ca3af; border-bottom:1px solid #1f2937;">Mapping</th>
+                      <th style="text-align:left; padding:8px 10px; color:#9ca3af; border-bottom:1px solid #1f2937;">Value</th>
+                      <th style="text-align:left; padding:8px 10px; color:#9ca3af; border-bottom:1px solid #1f2937;">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>${reportRows}</tbody>
+                </table>
+              </div>
+            </div>
+            <div>
+              <iframe src="${json.previewUrl}" style="width:100%; height:420px; border-radius:10px; border:1px solid #1f2937;"></iframe>
+            </div>
+          </div>
+        `;
+      } catch (e) { showToast(e.message); }
+    });
+
+    document.getElementById('exportBtn').addEventListener('click', async () => {
+      if (!state.pdfFile) return showToast('Upload a PDF first');
+      try {
+        const filenameTemplate = document.getElementById('filenameTemplate').value || '{rowIndex}.pdf';
+        const fd = new FormData();
+        fd.append('pdf', state.pdfFile);
+        fd.append('mapping', JSON.stringify(state.mapping));
+        fd.append('rows', JSON.stringify(state.data.rows));
+        fd.append('filenameTemplate', filenameTemplate);
+        const res = await fetch(API + '/api/export', { method: 'POST', body: fd });
+        const json = await res.json();
+        if (!res.ok) throw new Error(json.error || 'Export failed');
+        showToast(`Exported ${json.good} file(s)`);
+        document.getElementById('resultArea').innerHTML = json.bad
+          ? `<p class="muted">Good: ${json.good} · Bad: ${json.bad}</p>`
+          : `<p class="muted">Good: ${json.good}</p>`;
+        const a = document.createElement('a');
+        a.href = API + json.zipUrl;
+        a.download = 'filled.zip';
+        a.textContent = 'Download ZIP';
+        a.className = 'button success';
+        a.style.marginTop = '8px';
+        document.getElementById('resultArea').appendChild(a);
+      } catch (e) { showToast(e.message); }
+    });
+
+    document.getElementById('saveProjectBtn').addEventListener('click', async () => {
+      try {
+        const project = {
+          name: document.getElementById('projectName').value || 'Untitled project',
+          pdfFields: state.pdfFields,
+          dataHeaders: state.data.headers,
+          mapping: state.mapping,
+          filenameTemplate: document.getElementById('filenameTemplate').value,
+        };
+        const res = await fetch(API + '/api/projects', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(project)
+        });
+        const json = await res.json();
+        if (!res.ok) throw new Error(json.error || 'Save failed');
+        showToast('Project saved');
+      } catch (e) { showToast(e.message); }
+    });
+
+    function renderMapping(suggestions) {
+      const tbody = document.getElementById('mappingBody');
+      const selectMap = {};
+      tbody.innerHTML = '';
+      for (const field of state.pdfFields) {
+        const match = suggestions.find(s => s.target === field.name);
+        const source = match ? match.source : '';
+        const mapped = !!source;
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+          <td>${escapeHtml(field.name)}</td>
+          <td>${escapeHtml(field.type)}</td>
+          <td>
+            <select data-field="${escapeHtml(field.name)}" class="source-select">
+              <option value="">-- none --</option>
+              ${state.data.headers.map(h => `<option value="${escapeHtml(h)}" ${source === h ? 'selected' : ''}>${escapeHtml(h)}</option>`).join('')}
+            </select>
+          </td>
+          <td>${match ? confidenceTag(match) : '<span class="tag" style="background:#0b1220;color:#9ca3af;">Manual</span>'}</td>
+          <td>${match ? confidencePct(match) : '—'}</td>
+        `;
+        tbody.appendChild(tr);
+      }
+      tbody.querySelectorAll('select').forEach((sel) => {
+        sel.addEventListener('change', () => {
+          const fieldName = sel.dataset.field;
+          const value = sel.value;
+          if (!value) delete state.mapping[fieldName];
+          else state.mapping[fieldName] = value;
+          document.getElementById('mappingSummary').textContent = `Mapped: ${Object.keys(state.mapping).length} / ${state.pdfFields.length}`;
+        });
+      });
+      document.getElementById('mappingSummary').textContent = `Mapped: ${Object.keys(state.mapping).length} / ${state.pdfFields.length}`;
+    }
+
+    function updateUIState() {
+      const readyForSuggest = state.pdfFields.length && state.data.headers.length;
+      document.getElementById('suggestBtn').disabled = !readyForSuggest;
+      document.getElementById('aiSuggestBtn').disabled = !readyForSuggest;
+      document.getElementById('saveProjectBtn').disabled = !state.pdfFields.length;
+      document.getElementById('previewBtn').disabled = !state.pdfFields.length;
+      document.getElementById('exportBtn').disabled = !state.pdfFields.length;
+    }
+
+    function escapeHtml(str) {
+      return String(str ?? '').replace(/[&<>"']/g, (m) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[m]);
+    }
+  </script>
+</body>
+</html>

@@ -1,0 +1,8 @@
+node_modules/
+output/
+*.zip
+projects/
+.venv/
+.env
+DS_Store
+Thumbs.db
