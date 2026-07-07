@@ -64,7 +64,7 @@ Live repo: https://github.com/RicTheJamGuy/bulk-pdf-app
 
 ## Phase 5 — Multi-User & API
 
-**Goal:** Let teams and other tools use BPA as a service.
+**Goal:** Let teams and other tools use Bulk PDF App as a service.
 
 | Feature | Notes |
 |---|---|
