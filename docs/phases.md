@@ -103,7 +103,7 @@ Live repo: https://github.com/RicTheJamGuy/bulk-pdf-app
 
 ---
 
-## Out of Scope (v2 and beyond)
+## Out of Scope (Not Planned)
 
 - OCR for scanned/image-only PDFs (pdfplumber/pdf.js can extract text, but filling requires AcroForm fields)
 - Real-time collaborative mapping (multiple cursors editing the same mapping table)
