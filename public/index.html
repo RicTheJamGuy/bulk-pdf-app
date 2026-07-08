@@ -4,183 +4,621 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Bulk PDF Fill</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;700;800&family=Syne:wght@600;700;800&display=swap" rel="stylesheet" />
   <style>
     :root {
-      --bg: #0f172a;
-      --panel: #111827;
-      --panel-2: #0b1220;
-      --text: #e5e7eb;
-      --muted: #9ca3af;
-      --accent: #22d3ee;
-      --accent-2: #10b981;
-      --danger: #ef4444;
-      --warn: #f59e0b;
+      --bg: #05070f;
+      --bg-2: #090d1d;
+      --panel: rgba(9, 14, 28, 0.76);
+      --line: rgba(148, 163, 184, 0.22);
+      --text: #e2e8f0;
+      --muted: #94a3b8;
+      --accent: #2dd4bf;
+      --accent-2: #fb923c;
+      --radius: 14px;
     }
+
     * { box-sizing: border-box; }
+
+    html,
     body {
       margin: 0;
-      font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial;
-      background: var(--bg);
+      min-height: 100%;
+      scroll-behavior: smooth;
+      background: radial-gradient(1200px 500px at 90% -20%, rgba(45, 212, 191, 0.13), transparent 60%),
+                  radial-gradient(900px 450px at 10% 10%, rgba(251, 146, 60, 0.12), transparent 60%),
+                  linear-gradient(160deg, var(--bg), var(--bg-2));
       color: var(--text);
-      min-height: 100vh;
+      font-family: "Manrope", "Segoe UI", Tahoma, sans-serif;
+      overflow-x: hidden;
     }
-    .container {
-      max-width: 1100px;
+
+    body::before {
+      content: "";
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      background-image: radial-gradient(circle at 20% 20%, rgba(255, 255, 255, 0.02) 0, transparent 35%),
+                        radial-gradient(circle at 80% 80%, rgba(255, 255, 255, 0.015) 0, transparent 42%);
+      mix-blend-mode: screen;
+      z-index: -2;
+    }
+
+    .noise {
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      z-index: -1;
+      opacity: 0.03;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200' viewBox='0 0 200 200'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='200' height='200' filter='url(%23n)' opacity='1'/%3E%3C/svg%3E");
+    }
+
+    .cursor-dot {
+      position: fixed;
+      width: 16px;
+      height: 16px;
+      border-radius: 999px;
+      border: 1px solid rgba(226, 232, 240, 0.45);
+      background: rgba(45, 212, 191, 0.2);
+      backdrop-filter: blur(3px);
+      pointer-events: none;
+      z-index: 1200;
+      transform: translate(-50%, -50%);
+      opacity: 0;
+      transition: opacity 0.2s ease;
+      will-change: transform;
+    }
+
+    #preloader {
+      position: fixed;
+      inset: 0;
+      display: grid;
+      place-items: center;
+      z-index: 1400;
+      background: #04060f;
+      transition: opacity 0.7s ease, visibility 0.7s ease;
+    }
+
+    #preloader::before,
+    #preloader::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(100deg, rgba(45, 212, 191, 0.13), rgba(251, 146, 60, 0.13));
+      transition: transform 0.8s cubic-bezier(0.22, 1, 0.36, 1);
+      will-change: transform;
+    }
+
+    #preloader::before {
+      clip-path: polygon(0 0, 50% 0, 50% 100%, 0 100%);
+      transform: translateX(0);
+    }
+
+    #preloader::after {
+      clip-path: polygon(50% 0, 100% 0, 100% 100%, 50% 100%);
+      transform: translateX(0);
+    }
+
+    #preloader.hidden {
+      opacity: 0;
+      visibility: hidden;
+    }
+
+    #preloader.hidden::before { transform: translateX(-105%); }
+    #preloader.hidden::after { transform: translateX(105%); }
+
+    .loader-mark {
+      font-family: "Syne", "Segoe UI", sans-serif;
+      font-size: clamp(1.6rem, 5vw, 3rem);
+      letter-spacing: 0.14em;
+      font-weight: 700;
+      text-transform: uppercase;
+      color: #f8fafc;
+      z-index: 2;
+    }
+
+    .site-header {
+      position: sticky;
+      top: 0;
+      z-index: 1000;
+      border-bottom: 1px solid rgba(148, 163, 184, 0.2);
+      background: rgba(4, 8, 20, 0.78);
+      backdrop-filter: blur(14px);
+      transform: translateY(0);
+      transition: transform 0.35s ease;
+    }
+
+    .site-header.is-hidden { transform: translateY(-110%); }
+
+    .header-inner {
+      max-width: 1180px;
       margin: 0 auto;
-      padding: 24px;
-    }
-    header {
+      padding: 16px 24px;
       display: flex;
       align-items: center;
       justify-content: space-between;
-      padding: 18px 24px;
-      border-bottom: 1px solid #1f2937;
-      background: linear-gradient(180deg, rgba(17,24,39,.7), rgba(15,23,42,.4));
+      gap: 12px;
     }
-    header h1 { margin: 0; font-size: 20px; letter-spacing: 0.2px; }
+
+    .brand {
+      font-family: "Syne", "Segoe UI", sans-serif;
+      font-size: 1.1rem;
+      letter-spacing: 0.03em;
+      margin: 0;
+    }
+
     .pill {
       display: inline-flex;
       align-items: center;
       gap: 8px;
-      padding: 6px 12px;
+      padding: 7px 13px;
       border-radius: 999px;
-      background: #0b1220;
-      border: 1px solid #1f2937;
-      color: #d1d5db;
-      font-size: 12px;
+      border: 1px solid var(--line);
+      background: rgba(15, 23, 47, 0.8);
+      color: var(--text);
+      font-size: 0.75rem;
     }
+
+    .hero {
+      min-height: 84dvh;
+      max-width: 1180px;
+      margin: 0 auto;
+      display: grid;
+      align-items: center;
+      padding: 38px 24px 12px;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .hero::before {
+      content: "";
+      position: absolute;
+      inset: 8% -8% auto;
+      height: 66%;
+      border-radius: 42px;
+      background: linear-gradient(130deg, rgba(15, 23, 47, 0.9), rgba(5, 10, 20, 0.65));
+      border: 1px solid var(--line);
+      z-index: 0;
+    }
+
+    .hero-content {
+      position: relative;
+      z-index: 2;
+      max-width: 840px;
+      padding: 34px 24px;
+    }
+
+    .eyebrow {
+      text-transform: uppercase;
+      letter-spacing: 0.18em;
+      color: #b3e8df;
+      font-size: 0.72rem;
+      margin-bottom: 14px;
+      opacity: 0;
+      transform: translateY(10px);
+      animation: riseIn 0.7s 0.3s forwards;
+    }
+
+    .hero h1 {
+      margin: 0;
+      font-family: "Syne", "Segoe UI", sans-serif;
+      font-size: clamp(2.2rem, 7vw, 6rem);
+      line-height: 0.95;
+      text-transform: uppercase;
+      letter-spacing: 0.015em;
+      text-wrap: balance;
+    }
+
+    .word {
+      display: inline-block;
+      transform: translateY(18px);
+      opacity: 0;
+      will-change: transform, opacity;
+    }
+
+    .hero p {
+      margin: 18px 0 0;
+      font-size: clamp(1rem, 1.35vw, 1.2rem);
+      max-width: 58ch;
+      color: #cbd5e1;
+      opacity: 0;
+      transform: translateY(16px);
+      animation: riseIn 0.8s 0.55s forwards;
+    }
+
+    .hero-actions {
+      margin-top: 24px;
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+      opacity: 0;
+      transform: translateY(16px);
+      animation: riseIn 0.8s 0.72s forwards;
+    }
+
+    .hero-anchor {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      border-radius: 10px;
+      text-decoration: none;
+      border: 1px solid var(--line);
+      background: rgba(15, 23, 47, 0.75);
+      color: #ecfeff;
+      padding: 11px 15px;
+      font-size: 0.84rem;
+      transform: translate3d(0, 0, 0);
+      transition: transform 0.2s ease, border-color 0.2s ease;
+    }
+
+    .hero-anchor:hover {
+      transform: translate3d(0, -2px, 0);
+      border-color: rgba(45, 212, 191, 0.5);
+    }
+
+    .hero-anchor.primary {
+      background: linear-gradient(120deg, #0f766e, #0c4a6e);
+      border-color: #0f766e;
+      font-weight: 700;
+    }
+
+    .orb {
+      position: absolute;
+      border-radius: 999px;
+      filter: blur(2px);
+      pointer-events: none;
+      will-change: transform;
+    }
+
+    .orb.a {
+      width: 260px;
+      height: 260px;
+      right: 7%;
+      top: 19%;
+      background: radial-gradient(circle, rgba(45, 212, 191, 0.3), rgba(45, 212, 191, 0.02) 72%);
+    }
+
+    .orb.b {
+      width: 180px;
+      height: 180px;
+      left: 16%;
+      bottom: 13%;
+      background: radial-gradient(circle, rgba(251, 146, 60, 0.34), rgba(251, 146, 60, 0.03) 72%);
+    }
+
+    .container {
+      max-width: 1180px;
+      margin: 0 auto;
+      padding: 8px 24px 36px;
+    }
+
     .steps {
       display: grid;
-      grid-template-columns: repeat(4, 1fr);
+      grid-template-columns: repeat(4, minmax(0, 1fr));
       gap: 12px;
-      margin-top: 18px;
+      margin-top: 2px;
     }
+
     .step {
-      background: var(--panel);
-      border: 1px solid #1f2937;
-      border-radius: 12px;
-      padding: 16px;
+      background: rgba(10, 17, 33, 0.76);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      padding: 15px;
+      backdrop-filter: blur(10px);
+      transform: translate3d(0, 0, 0);
+      transition: transform 0.25s ease, border-color 0.25s ease;
     }
-    .step h3 { margin: 2px 0 8px; font-size: 14px; color: #cbd5e1; }
-    .step p { margin: 0; font-size: 12px; color: var(--muted); }
+
+    .step:hover {
+      transform: translate3d(0, -4px, 0);
+      border-color: rgba(45, 212, 191, 0.45);
+    }
+
+    .step h3 {
+      margin: 4px 0 8px;
+      font-size: 0.9rem;
+      color: #e2e8f0;
+    }
+
+    .step p {
+      margin: 0;
+      font-size: 0.78rem;
+      color: var(--muted);
+      line-height: 1.45;
+    }
+
     .step .num {
       display: inline-grid;
-      width: 22px; height: 22px;
+      width: 24px;
+      height: 24px;
       place-items: center;
       border-radius: 999px;
-      background: #0b1220;
-      border: 1px solid #1f2937;
-      color: #e5e7eb;
-      font-weight: 700;
-      font-size: 12px;
+      border: 1px solid rgba(45, 212, 191, 0.55);
+      color: #a7f3d0;
+      font-size: 0.74rem;
+      font-weight: 800;
+      background: rgba(5, 21, 28, 0.8);
     }
+
     .divider {
       height: 1px;
-      background: #1f2937;
+      background: linear-gradient(90deg, transparent, rgba(148, 163, 184, 0.3), transparent);
       margin: 18px 0;
     }
+
     .panel {
       background: var(--panel);
-      border: 1px solid #1f2937;
-      border-radius: 12px;
-      padding: 16px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      padding: 17px;
+      backdrop-filter: blur(10px);
+      opacity: 0;
+      transform: translateY(20px);
+      transition: opacity 0.6s ease, transform 0.6s ease;
     }
+
+    .panel.in {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    .panel h2 {
+      margin: 0 0 12px;
+      font-size: 1rem;
+      letter-spacing: 0.015em;
+      color: #dbeafe;
+    }
+
     .panel + .panel { margin-top: 14px; }
-    .panel h2 { margin: 0 0 10px; font-size: 16px; color: #cbd5e1; }
+
     .row { display: flex; gap: 12px; flex-wrap: wrap; }
     .col { flex: 1 1 280px; }
-    input[type="file"], select, input[type="text"] {
+
+    input[type="file"],
+    input[type="text"],
+    input[type="number"],
+    select {
       width: 100%;
-      background: #0b1220;
-      color: #e5e7eb;
-      border: 1px solid #1f2937;
-      border-radius: 8px;
-      padding: 10px 12px;
+      background: rgba(10, 18, 35, 0.88);
+      color: var(--text);
+      border: 1px solid rgba(148, 163, 184, 0.28);
+      border-radius: 10px;
+      padding: 11px 12px;
+      outline: none;
+      font-family: inherit;
+      transition: border-color 0.2s ease, box-shadow 0.2s ease;
     }
-    button, .button {
+
+    input[type="file"]:focus,
+    input[type="text"]:focus,
+    input[type="number"]:focus,
+    select:focus {
+      border-color: rgba(45, 212, 191, 0.6);
+      box-shadow: 0 0 0 3px rgba(45, 212, 191, 0.12);
+    }
+
+    button,
+    .button {
       display: inline-flex;
       align-items: center;
       justify-content: center;
       gap: 8px;
       padding: 10px 14px;
-      border-radius: 8px;
-      border: 1px solid #1f2937;
-      background: linear-gradient(180deg, #122234, #0f172a);
-      color: #e5e7eb;
+      border-radius: 10px;
+      border: 1px solid rgba(148, 163, 184, 0.3);
+      background: linear-gradient(140deg, #132139, #0d1831);
+      color: #e2e8f0;
       cursor: pointer;
-      font-size: 13px;
+      font-size: 0.82rem;
+      font-weight: 600;
+      transform: translate3d(0, 0, 0);
+      transition: transform 0.22s ease, border-color 0.22s ease, box-shadow 0.22s ease;
+      text-decoration: none;
+      will-change: transform;
     }
+
+    button:hover,
+    .button:hover {
+      transform: translate3d(0, -2px, 0);
+      border-color: rgba(45, 212, 191, 0.45);
+      box-shadow: 0 10px 24px rgba(15, 23, 47, 0.35);
+    }
+
     button.primary {
-      background: linear-gradient(180deg, #0e7490, #0b556b);
-      border-color: #0e7490;
+      background: linear-gradient(130deg, #0f766e, #115e59);
+      border-color: #0f766e;
       color: #ecfeff;
       font-weight: 700;
     }
-    button.success {
-      background: linear-gradient(180deg, #059669, #064e3b);
-      border-color: #059669;
-      color: #ecfdf5;
+
+    button.success,
+    .button.success {
+      background: linear-gradient(130deg, #15803d, #14532d);
+      border-color: #16a34a;
+      color: #f0fdf4;
       font-weight: 700;
     }
+
+    button:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+      transform: none;
+      box-shadow: none;
+    }
+
     table {
       width: 100%;
       border-collapse: collapse;
       margin-top: 10px;
-      font-size: 13px;
+      font-size: 0.82rem;
     }
-    th, td {
+
+    th,
+    td {
       text-align: left;
       padding: 8px 10px;
-      border-bottom: 1px solid #1f2937;
+      border-bottom: 1px solid rgba(148, 163, 184, 0.22);
       color: #d1d5db;
     }
-    th { color: #9ca3af; font-weight: 600; }
+
+    th {
+      color: #9ca3af;
+      font-weight: 600;
+    }
+
     .tag {
       display: inline-block;
       padding: 3px 8px;
       border-radius: 999px;
-      font-size: 11px;
+      font-size: 0.68rem;
       font-weight: 700;
     }
-    .tag-auto { background: rgba(16,185,129,.15); color: #6ee7b7; border: 1px solid #065f46; }
-    .tag-suggest { background: rgba(245,158,11,.12); color: #fcd34d; border: 1px solid #92400e; }
-    .tag-weak { background: rgba(239,68,68,.12); color: #fca5a5; border: 1px solid #7f1d1d; }
-    .muted { color: var(--muted); font-size: 12px; }
-    .empty { color: #6b7280; font-size: 13px; }
-    .progress { height: 8px; background: #0b1220; border: 1px solid #1f2937; border-radius: 999px; overflow: hidden; }
-    .progress > div { height: 100%; background: linear-gradient(90deg, #06b6d4, #10b981); width: 0%; transition: width .2s; }
+
+    .tag-auto {
+      background: rgba(16, 185, 129, 0.14);
+      color: #86efac;
+      border: 1px solid rgba(16, 185, 129, 0.38);
+    }
+
+    .tag-suggest {
+      background: rgba(251, 146, 60, 0.16);
+      color: #fdba74;
+      border: 1px solid rgba(251, 146, 60, 0.45);
+    }
+
+    .tag-weak {
+      background: rgba(248, 113, 113, 0.15);
+      color: #fca5a5;
+      border: 1px solid rgba(248, 113, 113, 0.42);
+    }
+
+    .muted { color: var(--muted); font-size: 0.78rem; }
+    .empty { color: #64748b; font-size: 0.82rem; }
+
     .toast {
       position: fixed;
       right: 16px;
       bottom: 16px;
-      background: #0b1220;
-      border: 1px solid #1f2937;
-      color: #e5e7eb;
+      background: rgba(7, 14, 28, 0.9);
+      border: 1px solid var(--line);
+      color: var(--text);
       padding: 10px 14px;
-      border-radius: 10px;
-      font-size: 13px;
-      box-shadow: 0 10px 30px rgba(0,0,0,.4);
-      z-index: 1000;
+      border-radius: 12px;
+      font-size: 0.82rem;
+      box-shadow: 0 10px 28px rgba(0, 0, 0, 0.45);
+      z-index: 1300;
       display: none;
+      backdrop-filter: blur(10px);
     }
+
     .thumb {
       width: 100%;
       max-height: 180px;
       object-fit: contain;
-      border: 1px solid #1f2937;
-      border-radius: 8px;
-      background: #0b1220;
+      border: 1px solid rgba(148, 163, 184, 0.28);
+      border-radius: 10px;
+      background: rgba(9, 14, 28, 0.7);
+    }
+
+    .reveal-sequence .step {
+      opacity: 0;
+      transform: translateY(16px);
+      animation: riseIn 0.7s forwards;
+    }
+
+    .reveal-sequence .step:nth-child(1) { animation-delay: 0.12s; }
+    .reveal-sequence .step:nth-child(2) { animation-delay: 0.18s; }
+    .reveal-sequence .step:nth-child(3) { animation-delay: 0.24s; }
+    .reveal-sequence .step:nth-child(4) { animation-delay: 0.3s; }
+
+    @keyframes riseIn {
+      from {
+        opacity: 0;
+        transform: translateY(16px);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    @media (max-width: 980px) {
+      .hero { min-height: 72dvh; }
+      .steps { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+
+    @media (max-width: 700px) {
+      .header-inner,
+      .container,
+      .hero {
+        padding-left: 16px;
+        padding-right: 16px;
+      }
+
+      .hero-content { padding: 22px 14px; }
+      .steps { grid-template-columns: 1fr; }
+      .hero-actions { flex-direction: column; align-items: stretch; }
+      .hero-anchor { width: 100%; }
+    }
+
+    @media (hover: none), (pointer: coarse) {
+      .cursor-dot { display: none; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      * {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+        scroll-behavior: auto !important;
+      }
+
+      .panel {
+        opacity: 1;
+        transform: none;
+      }
+
+      .word {
+        opacity: 1;
+        transform: none;
+      }
     }
   </style>
 </head>
 <body>
-  <div class="container">
-    <header>
-      <h1>Bulk PDF Fill</h1>
-      <div class="pill">v1 <span style="color:#6b7280;">•</span> <span id="statusText">Ready</span></div>
-    </header>
+  <div class="noise" aria-hidden="true"></div>
+  <div class="cursor-dot" id="cursorDot" aria-hidden="true"></div>
 
-    <div class="steps">
+  <div id="preloader" aria-hidden="true">
+    <div class="loader-mark">Bulk PDF Fill</div>
+  </div>
+
+  <header class="site-header" id="siteHeader">
+    <div class="header-inner">
+      <h1 class="brand">Bulk PDF Fill</h1>
+      <div class="pill">v1 <span style="color:#64748b;">|</span> <span id="statusText">Ready</span></div>
+    </div>
+  </header>
+
+  <section class="hero" aria-label="Hero">
+    <span class="orb a" id="orbA"></span>
+    <span class="orb b" id="orbB"></span>
+    <div class="hero-content">
+      <div class="eyebrow">High throughput form production</div>
+      <h1 id="heroTitle">Map once. Fill every PDF in one pass.</h1>
+      <p>Upload your template and data source, review intelligent suggestions, and export finished files as a zip package with consistent naming.</p>
+      <div class="hero-actions">
+        <a class="hero-anchor primary magnetic" href="#step1">Start workflow</a>
+        <a class="hero-anchor magnetic" href="#step3">Jump to mapping</a>
+      </div>
+    </div>
+  </section>
+
+  <div class="container">
+    <div class="steps reveal-sequence">
       <div class="step"><div><span class="num">1</span></div><h3>Template</h3><p>Upload the blank PDF form.</p></div>
       <div class="step"><div><span class="num">2</span></div><h3>Data</h3><p>Upload CSV, Excel, or JSON.</p></div>
       <div class="step"><div><span class="num">3</span></div><h3>Map</h3><p>Match columns to PDF fields.</p></div>
@@ -189,9 +627,8 @@
 
     <div class="divider"></div>
 
-    <!-- Step 1 -->
     <section class="panel" id="step1">
-      <h2>Step 1 — Upload PDF template</h2>
+      <h2>Step 1 - Upload PDF template</h2>
       <input type="file" id="pdfInput" accept="application/pdf" />
       <div id="pdfPreview" style="margin-top:10px; display:none;">
         <p class="muted" id="pdfFilename"></p>
@@ -200,9 +637,8 @@
       </div>
     </section>
 
-    <!-- Step 2 -->
-    <section class="panel" id="step2" style="margin-top:14px;">
-      <h2>Step 2 — Upload data source</h2>
+    <section class="panel" id="step2">
+      <h2>Step 2 - Upload data source</h2>
       <input type="file" id="dataInput" accept=".csv,.xlsx,.xls,.json" />
       <div id="dataPreview" style="margin-top:10px; display:none;">
         <p class="muted" id="dataFilename"></p>
@@ -210,23 +646,22 @@
       </div>
     </section>
 
-    <!-- Step 3 -->
-    <section class="panel" id="step3" style="margin-top:14px;">
-      <h2>Step 3 — Map fields</h2>
+    <section class="panel" id="step3">
+      <h2>Step 3 - Map fields</h2>
       <div class="row">
         <div class="col">
-          <button id="suggestBtn" class="primary" disabled>Suggest mapping</button>
-          <button id="acceptAutoBtn" class="success" disabled>Accept auto-matches</button>
+          <button id="suggestBtn" class="primary magnetic" disabled>Suggest mapping</button>
+          <button id="acceptAutoBtn" class="success magnetic" disabled>Accept auto-matches</button>
           <input type="text" id="projectName" placeholder="Project name (optional)" style="margin-top:10px;" />
-          <button id="saveProjectBtn" class="button" style="margin-top:10px;" disabled>Save project</button>
+          <button id="saveProjectBtn" class="button magnetic" style="margin-top:10px;" disabled>Save project</button>
         </div>
         <div class="col">
-          <button id="aiSuggestBtn" class="button" disabled>AI suggest (optional)</button>
+          <button id="aiSuggestBtn" class="button magnetic" disabled>AI suggest (optional)</button>
           <p class="muted" id="aiStatus">Will use dataset names only to propose matches.</p>
         </div>
       </div>
 
-      <div style="overflow:auto; margin-top:10px; border:1px solid #1f2937; border-radius:10px;">
+      <div style="overflow:auto; margin-top:10px; border:1px solid rgba(148,163,184,0.24); border-radius:10px;">
         <table id="mappingTable">
           <thead>
             <tr>
@@ -243,9 +678,8 @@
       <p class="muted" id="mappingSummary" style="margin-top:8px;"></p>
     </section>
 
-    <!-- Step 4 -->
-    <section class="panel" id="step4" style="margin-top:14px;">
-      <h2>Step 4 — Preview & export</h2>
+    <section class="panel" id="step4">
+      <h2>Step 4 - Preview and export</h2>
       <div class="row">
         <div class="col">
           <label class="muted">Filename pattern</label>
@@ -255,8 +689,8 @@
         <div class="col">
           <label class="muted">Preview record</label>
           <input type="number" id="previewRowIndex" value="1" min="1" />
-          <button id="previewBtn" class="button" style="margin-top:8px;" disabled>Preview</button>
-          <button id="exportBtn" class="success" style="margin-top:8px;" disabled>Export ZIP</button>
+          <button id="previewBtn" class="button magnetic" style="margin-top:8px;" disabled>Preview</button>
+          <button id="exportBtn" class="success magnetic" style="margin-top:8px;" disabled>Export ZIP</button>
         </div>
       </div>
       <div id="resultArea" style="margin-top:10px;"></div>
@@ -268,7 +702,7 @@
   <div class="toast" id="toast"></div>
 
   <script>
-    const API = '';
+    const API = "";
     let state = {
       pdfFile: null,
       pdfFields: [],
@@ -278,122 +712,237 @@
       mapping: {},
     };
 
-    function showToast(msg, ms = 2200) {
-      const el = document.getElementById('toast');
-      el.textContent = msg;
-      el.style.display = 'block';
-      clearTimeout(el._t);
-      el._t = setTimeout(() => { el.style.display = 'none'; }, ms);
+    function initMotionShell() {
+      const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      const preloader = document.getElementById("preloader");
+      const heroTitle = document.getElementById("heroTitle");
+      const panels = document.querySelectorAll(".panel");
+
+      if (heroTitle) {
+        const words = heroTitle.textContent.split(" ");
+        heroTitle.innerHTML = words
+          .map((word, index) => `<span class="word" style="animation: riseIn 0.64s ${0.08 + index * 0.06}s forwards;">${escapeHtml(word)}</span>`)
+          .join(" ");
+      }
+
+      if (!reduced) {
+        setTimeout(() => {
+          preloader.classList.add("hidden");
+        }, 650);
+      } else {
+        preloader.classList.add("hidden");
+      }
+
+      const observer = new IntersectionObserver((entries) => {
+        entries.forEach((entry) => {
+          if (entry.isIntersecting) {
+            entry.target.classList.add("in");
+            observer.unobserve(entry.target);
+          }
+        });
+      }, { threshold: 0.2 });
+
+      panels.forEach((panel) => observer.observe(panel));
     }
 
-    async function uploadFile(inputId, url, extra = {}) {
+    function initHeaderBehavior() {
+      const header = document.getElementById("siteHeader");
+      let lastY = window.scrollY;
+
+      window.addEventListener("scroll", () => {
+        const y = window.scrollY;
+        const isDown = y > lastY;
+        if (y > 120 && isDown) {
+          header.classList.add("is-hidden");
+        } else {
+          header.classList.remove("is-hidden");
+        }
+        lastY = y;
+      }, { passive: true });
+    }
+
+    function initCursorAndMagnet() {
+      const finePointer = window.matchMedia("(hover: hover) and (pointer: fine)").matches;
+      const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      if (!finePointer || reduced) return;
+
+      const cursor = document.getElementById("cursorDot");
+      if (!cursor) return;
+
+      let cursorX = window.innerWidth / 2;
+      let cursorY = window.innerHeight / 2;
+      let targetX = cursorX;
+      let targetY = cursorY;
+
+      const render = () => {
+        cursorX += (targetX - cursorX) * 0.2;
+        cursorY += (targetY - cursorY) * 0.2;
+        cursor.style.transform = `translate(${cursorX}px, ${cursorY}px) translate(-50%, -50%)`;
+        requestAnimationFrame(render);
+      };
+
+      window.addEventListener("mousemove", (event) => {
+        targetX = event.clientX;
+        targetY = event.clientY;
+        cursor.style.opacity = "1";
+      });
+
+      document.querySelectorAll(".magnetic").forEach((el) => {
+        el.addEventListener("mousemove", (event) => {
+          const rect = el.getBoundingClientRect();
+          const x = event.clientX - (rect.left + rect.width / 2);
+          const y = event.clientY - (rect.top + rect.height / 2);
+          el.style.transform = `translate3d(${x * 0.14}px, ${y * 0.14}px, 0)`;
+        });
+        el.addEventListener("mouseleave", () => {
+          el.style.transform = "translate3d(0,0,0)";
+        });
+      });
+
+      render();
+    }
+
+    function initParallaxOrbs() {
+      const orbA = document.getElementById("orbA");
+      const orbB = document.getElementById("orbB");
+      const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      if (!orbA || !orbB || reduced) return;
+
+      window.addEventListener("mousemove", (event) => {
+        const x = (event.clientX / window.innerWidth) - 0.5;
+        const y = (event.clientY / window.innerHeight) - 0.5;
+        orbA.style.transform = `translate3d(${x * 20}px, ${y * 24}px, 0)`;
+        orbB.style.transform = `translate3d(${x * -18}px, ${y * -16}px, 0)`;
+      });
+    }
+
+    function showToast(msg, ms = 2200) {
+      const el = document.getElementById("toast");
+      el.textContent = msg;
+      el.style.display = "block";
+      clearTimeout(el._t);
+      el._t = setTimeout(() => { el.style.display = "none"; }, ms);
+    }
+
+    async function uploadFile(inputId, url) {
       const input = document.getElementById(inputId);
       const file = input.files[0];
-      if (!file) return showToast('Choose a file first');
+      if (!file) return showToast("Choose a file first");
       const fd = new FormData();
-      fd.append(inputId === 'pdfInput' ? 'pdf' : 'data', file);
-      const res = await fetch(API + url, { method: 'POST', body: fd });
+      fd.append(inputId === "pdfInput" ? "pdf" : "data", file);
+      const res = await fetch(API + url, { method: "POST", body: fd });
       const json = await res.json();
-      if (!res.ok) throw new Error(json.error || json.message || 'Upload failed');
+      if (!res.ok) throw new Error(json.error || json.message || "Upload failed");
       return { file, json };
     }
 
-    document.getElementById('pdfInput').addEventListener('change', async () => {
+    document.getElementById("pdfInput").addEventListener("change", async () => {
       try {
-        const { file, json } = await uploadFile('pdfInput', '/api/upload/pdf');
+        const { file, json } = await uploadFile("pdfInput", "/api/upload/pdf");
         state.pdfFile = file;
         state.pdfFields = json.fields || [];
-        document.getElementById('pdfPreview').style.display = 'block';
-        document.getElementById('pdfFilename').textContent = json.filename;
-        document.getElementById('pdfFieldCount').textContent = `Detected fields: ${state.pdfFields.length}`;
+        document.getElementById("pdfPreview").style.display = "block";
+        document.getElementById("pdfFilename").textContent = json.filename;
+        document.getElementById("pdfFieldCount").textContent = `Detected fields: ${state.pdfFields.length}`;
         if (file) {
           const url = URL.createObjectURL(file);
-          document.getElementById('pdfThumb').src = url;
+          document.getElementById("pdfThumb").src = url;
         }
         updateUIState();
-      } catch (e) { showToast(e.message); }
+      } catch (e) {
+        showToast(e.message);
+      }
     });
 
-    document.getElementById('dataInput').addEventListener('change', async () => {
+    document.getElementById("dataInput").addEventListener("change", async () => {
       try {
-        const { file, json } = await uploadFile('dataInput', '/api/upload/data');
+        const { file, json } = await uploadFile("dataInput", "/api/upload/data");
         state.dataFile = file;
         state.data = { headers: json.headers || [], rows: json.sample || [] };
-        document.getElementById('dataPreview').style.display = 'block';
-        document.getElementById('dataFilename').textContent = json.filename;
-        document.getElementById('dataMeta').textContent = `Rows: ${json.rowCount || 0} · Columns: ${(json.headers || []).length}`;
+        document.getElementById("dataPreview").style.display = "block";
+        document.getElementById("dataFilename").textContent = json.filename;
+        document.getElementById("dataMeta").textContent = `Rows: ${json.rowCount || 0} | Columns: ${(json.headers || []).length}`;
         updateUIState();
-      } catch (e) { showToast(e.message); }
+      } catch (e) {
+        showToast(e.message);
+      }
     });
 
     const confidenceTag = (s) => {
-      if (s.reason === 'exact') return `<span class="tag tag-auto">Auto</span>`;
-      if (s.reason === 'fuzzy' || s.reason === 'contains') return `<span class="tag tag-suggest">Suggested</span>`;
-      return `<span class="tag tag-weak">Weak</span>`;
+      if (s.reason === "exact") return "<span class=\"tag tag-auto\">Auto</span>";
+      if (s.reason === "fuzzy" || s.reason === "contains") return "<span class=\"tag tag-suggest\">Suggested</span>";
+      return "<span class=\"tag tag-weak\">Weak</span>";
     };
-    const confidencePct = (s) => Math.round((s.score || 0) * 100) + '%';
 
-    document.getElementById('suggestBtn').addEventListener('click', async () => {
+    const confidencePct = (s) => Math.round((s.score || 0) * 100) + "%";
+
+    document.getElementById("suggestBtn").addEventListener("click", async () => {
       try {
-        const res = await fetch(API + '/api/mapping/suggest', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+        const res = await fetch(API + "/api/mapping/suggest", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ sourceHeaders: state.data.headers, pdfFields: state.pdfFields })
         });
         const json = await res.json();
-        if (!res.ok) throw new Error(json.error || 'Suggestion failed');
+        if (!res.ok) throw new Error(json.error || "Suggestion failed");
         state.suggestions = json.suggestions || [];
         renderMapping(state.suggestions);
-        document.getElementById('acceptAutoBtn').disabled = false;
+        document.getElementById("acceptAutoBtn").disabled = false;
         updateUIState();
-      } catch (e) { showToast(e.message); }
+      } catch (e) {
+        showToast(e.message);
+      }
     });
 
-    document.getElementById('acceptAutoBtn').addEventListener('click', () => {
+    document.getElementById("acceptAutoBtn").addEventListener("click", () => {
       state.mapping = {};
       for (const s of state.suggestions) {
-        if (s.reason === 'exact' || s.reason === 'fuzzy' || s.reason === 'pattern') state.mapping[s.target] = s.source;
+        if (s.reason === "exact" || s.reason === "fuzzy" || s.reason === "pattern") {
+          state.mapping[s.target] = s.source;
+        }
       }
       showToast(`Accepted ${Object.keys(state.mapping).length} matches`);
       renderMapping(state.suggestions);
     });
 
-    document.getElementById('previewBtn').addEventListener('click', async () => {
-      if (!state.pdfFile) return showToast('Upload a PDF first');
+    document.getElementById("previewBtn").addEventListener("click", async () => {
+      if (!state.pdfFile) return showToast("Upload a PDF first");
       try {
-        const rowIndex = Number(document.getElementById('previewRowIndex').value) || 1;
+        const rowIndex = Number(document.getElementById("previewRowIndex").value) || 1;
         const record = state.data.rows[Math.max(0, rowIndex - 1)] || {};
         const fd = new FormData();
-        fd.append('pdf', state.pdfFile);
-        fd.append('mapping', JSON.stringify(state.mapping));
-        fd.append('data', JSON.stringify(record));
-        fd.append('rowIndex', String(rowIndex));
-        const res = await fetch(API + '/api/preview', { method: 'POST', body: fd });
+        fd.append("pdf", state.pdfFile);
+        fd.append("mapping", JSON.stringify(state.mapping));
+        fd.append("data", JSON.stringify(record));
+        fd.append("rowIndex", String(rowIndex));
+        const res = await fetch(API + "/api/preview", { method: "POST", body: fd });
         const json = await res.json();
-        if (!res.ok) throw new Error(json.error || 'Preview failed');
+        if (!res.ok) throw new Error(json.error || "Preview failed");
+
         const reportRows = (json.fillReport || [])
           .sort((a, b) => String(a.pdfFieldName).localeCompare(String(b.pdfFieldName)))
-          .map(item => {
-            const name = `${item.sourceKey} → ${item.pdfFieldName}`;
-            const val = escapeHtml(String(item.value ?? ''));
+          .map((item) => {
+            const name = `${item.sourceKey} -> ${item.pdfFieldName}`;
+            const val = escapeHtml(String(item.value ?? ""));
             const status = item.written
-              ? `<span style="color:#6ee7b7">Filled</span>`
+              ? "<span style=\"color:#86efac\">Filled</span>"
               : item.error
-                ? `<span style="color:#fca5a5">Missing field</span>`
-                : `<span style="color:#9ca3af">Empty</span>`;
-            return `<tr><td>${escapeHtml(name)}</td><td>${escapeHtml(val) || '<span style="color:#6b7280">—</span>'}</td><td>${status}</td></tr>`;
-          }).join('');
-        document.getElementById('resultArea').innerHTML = `
+                ? "<span style=\"color:#fca5a5\">Missing field</span>"
+                : "<span style=\"color:#9ca3af\">Empty</span>";
+            return `<tr><td>${escapeHtml(name)}</td><td>${escapeHtml(val) || "<span style=\"color:#64748b\">-</span>"}</td><td>${status}</td></tr>`;
+          }).join("");
+
+        document.getElementById("resultArea").innerHTML = `
           <p class="muted">Preview for row ${rowIndex}</p>
-          <div style="display:grid; grid-template-columns: 1fr; gap:12px;">
+          <div style="display:grid; grid-template-columns:1fr; gap:12px;">
             <div>
-              <div style="max-height:260px; overflow:auto; border:1px solid #1f2937; border-radius:10px;">
+              <div style="max-height:260px; overflow:auto; border:1px solid rgba(148,163,184,0.24); border-radius:10px;">
                 <table style="width:100%; border-collapse:collapse; font-size:12px;">
                   <thead>
                     <tr>
-                      <th style="text-align:left; padding:8px 10px; color:#9ca3af; border-bottom:1px solid #1f2937;">Mapping</th>
-                      <th style="text-align:left; padding:8px 10px; color:#9ca3af; border-bottom:1px solid #1f2937;">Value</th>
-                      <th style="text-align:left; padding:8px 10px; color:#9ca3af; border-bottom:1px solid #1f2937;">Status</th>
+                      <th style="text-align:left; padding:8px 10px; color:#9ca3af; border-bottom:1px solid rgba(148,163,184,0.24);">Mapping</th>
+                      <th style="text-align:left; padding:8px 10px; color:#9ca3af; border-bottom:1px solid rgba(148,163,184,0.24);">Value</th>
+                      <th style="text-align:left; padding:8px 10px; color:#9ca3af; border-bottom:1px solid rgba(148,163,184,0.24);">Status</th>
                     </tr>
                   </thead>
                   <tbody>${reportRows}</tbody>
@@ -401,106 +950,126 @@
               </div>
             </div>
             <div>
-              <iframe src="${json.previewUrl}" style="width:100%; height:420px; border-radius:10px; border:1px solid #1f2937;"></iframe>
+              <iframe src="${json.previewUrl}" style="width:100%; height:420px; border-radius:10px; border:1px solid rgba(148,163,184,0.24);"></iframe>
             </div>
           </div>
         `;
-      } catch (e) { showToast(e.message); }
+      } catch (e) {
+        showToast(e.message);
+      }
     });
 
-    document.getElementById('exportBtn').addEventListener('click', async () => {
-      if (!state.pdfFile) return showToast('Upload a PDF first');
+    document.getElementById("exportBtn").addEventListener("click", async () => {
+      if (!state.pdfFile) return showToast("Upload a PDF first");
       try {
-        const filenameTemplate = document.getElementById('filenameTemplate').value || '{rowIndex}.pdf';
+        const filenameTemplate = document.getElementById("filenameTemplate").value || "{rowIndex}.pdf";
         const fd = new FormData();
-        fd.append('pdf', state.pdfFile);
-        fd.append('mapping', JSON.stringify(state.mapping));
-        fd.append('rows', JSON.stringify(state.data.rows));
-        fd.append('filenameTemplate', filenameTemplate);
-        const res = await fetch(API + '/api/export', { method: 'POST', body: fd });
+        fd.append("pdf", state.pdfFile);
+        fd.append("mapping", JSON.stringify(state.mapping));
+        fd.append("rows", JSON.stringify(state.data.rows));
+        fd.append("filenameTemplate", filenameTemplate);
+        const res = await fetch(API + "/api/export", { method: "POST", body: fd });
         const json = await res.json();
-        if (!res.ok) throw new Error(json.error || 'Export failed');
+        if (!res.ok) throw new Error(json.error || "Export failed");
         showToast(`Exported ${json.good} file(s)`);
-        document.getElementById('resultArea').innerHTML = json.bad
-          ? `<p class="muted">Good: ${json.good} · Bad: ${json.bad}</p>`
+        document.getElementById("resultArea").innerHTML = json.bad
+          ? `<p class="muted">Good: ${json.good} | Bad: ${json.bad}</p>`
           : `<p class="muted">Good: ${json.good}</p>`;
-        const a = document.createElement('a');
+        const a = document.createElement("a");
         a.href = API + json.zipUrl;
-        a.download = 'filled.zip';
-        a.textContent = 'Download ZIP';
-        a.className = 'button success';
-        a.style.marginTop = '8px';
-        document.getElementById('resultArea').appendChild(a);
-      } catch (e) { showToast(e.message); }
+        a.download = "filled.zip";
+        a.textContent = "Download ZIP";
+        a.className = "button success";
+        a.style.marginTop = "8px";
+        document.getElementById("resultArea").appendChild(a);
+      } catch (e) {
+        showToast(e.message);
+      }
     });
 
-    document.getElementById('saveProjectBtn').addEventListener('click', async () => {
+    document.getElementById("saveProjectBtn").addEventListener("click", async () => {
       try {
         const project = {
-          name: document.getElementById('projectName').value || 'Untitled project',
+          name: document.getElementById("projectName").value || "Untitled project",
           pdfFields: state.pdfFields,
           dataHeaders: state.data.headers,
           mapping: state.mapping,
-          filenameTemplate: document.getElementById('filenameTemplate').value,
+          filenameTemplate: document.getElementById("filenameTemplate").value,
         };
-        const res = await fetch(API + '/api/projects', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+        const res = await fetch(API + "/api/projects", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
           body: JSON.stringify(project)
         });
         const json = await res.json();
-        if (!res.ok) throw new Error(json.error || 'Save failed');
-        showToast('Project saved');
-      } catch (e) { showToast(e.message); }
+        if (!res.ok) throw new Error(json.error || "Save failed");
+        showToast("Project saved");
+      } catch (e) {
+        showToast(e.message);
+      }
     });
 
     function renderMapping(suggestions) {
-      const tbody = document.getElementById('mappingBody');
-      const selectMap = {};
-      tbody.innerHTML = '';
+      const tbody = document.getElementById("mappingBody");
+      tbody.innerHTML = "";
       for (const field of state.pdfFields) {
-        const match = suggestions.find(s => s.target === field.name);
-        const source = match ? match.source : '';
-        const mapped = !!source;
-        const tr = document.createElement('tr');
+        const match = suggestions.find((s) => s.target === field.name);
+        const source = match ? match.source : "";
+        const tr = document.createElement("tr");
         tr.innerHTML = `
           <td>${escapeHtml(field.name)}</td>
           <td>${escapeHtml(field.type)}</td>
           <td>
             <select data-field="${escapeHtml(field.name)}" class="source-select">
               <option value="">-- none --</option>
-              ${state.data.headers.map(h => `<option value="${escapeHtml(h)}" ${source === h ? 'selected' : ''}>${escapeHtml(h)}</option>`).join('')}
+              ${state.data.headers.map((h) => `<option value="${escapeHtml(h)}" ${source === h ? "selected" : ""}>${escapeHtml(h)}</option>`).join("")}
             </select>
           </td>
-          <td>${match ? confidenceTag(match) : '<span class="tag" style="background:#0b1220;color:#9ca3af;">Manual</span>'}</td>
-          <td>${match ? confidencePct(match) : '—'}</td>
+          <td>${match ? confidenceTag(match) : "<span class=\"tag\" style=\"background:rgba(15,23,47,0.75);color:#9ca3af;\">Manual</span>"}</td>
+          <td>${match ? confidencePct(match) : "-"}</td>
         `;
         tbody.appendChild(tr);
       }
-      tbody.querySelectorAll('select').forEach((sel) => {
-        sel.addEventListener('change', () => {
+
+      tbody.querySelectorAll("select").forEach((sel) => {
+        sel.addEventListener("change", () => {
           const fieldName = sel.dataset.field;
           const value = sel.value;
-          if (!value) delete state.mapping[fieldName];
-          else state.mapping[fieldName] = value;
-          document.getElementById('mappingSummary').textContent = `Mapped: ${Object.keys(state.mapping).length} / ${state.pdfFields.length}`;
+          if (!value) {
+            delete state.mapping[fieldName];
+          } else {
+            state.mapping[fieldName] = value;
+          }
+          document.getElementById("mappingSummary").textContent = `Mapped: ${Object.keys(state.mapping).length} / ${state.pdfFields.length}`;
         });
       });
-      document.getElementById('mappingSummary').textContent = `Mapped: ${Object.keys(state.mapping).length} / ${state.pdfFields.length}`;
+
+      document.getElementById("mappingSummary").textContent = `Mapped: ${Object.keys(state.mapping).length} / ${state.pdfFields.length}`;
     }
 
     function updateUIState() {
       const readyForSuggest = state.pdfFields.length && state.data.headers.length;
-      document.getElementById('suggestBtn').disabled = !readyForSuggest;
-      document.getElementById('aiSuggestBtn').disabled = !readyForSuggest;
-      document.getElementById('saveProjectBtn').disabled = !state.pdfFields.length;
-      document.getElementById('previewBtn').disabled = !state.pdfFields.length;
-      document.getElementById('exportBtn').disabled = !state.pdfFields.length;
+      document.getElementById("suggestBtn").disabled = !readyForSuggest;
+      document.getElementById("aiSuggestBtn").disabled = !readyForSuggest;
+      document.getElementById("saveProjectBtn").disabled = !state.pdfFields.length;
+      document.getElementById("previewBtn").disabled = !state.pdfFields.length;
+      document.getElementById("exportBtn").disabled = !state.pdfFields.length;
     }
 
     function escapeHtml(str) {
-      return String(str ?? '').replace(/[&<>"']/g, (m) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[m]);
+      return String(str ?? "").replace(/[&<>\"']/g, (m) => ({
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+        "\"": "&quot;",
+        "'": "&#39;"
+      })[m]);
     }
+
+    initMotionShell();
+    initHeaderBehavior();
+    initCursorAndMagnet();
+    initParallaxOrbs();
   </script>
 </body>
 </html>
