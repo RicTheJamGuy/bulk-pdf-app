@@ -292,12 +292,16 @@ function scoreMatch(sourceNorm, targetNorm) {
 // aliases and requiring distinctive context tokens so generic repeated PDF
 // fields (ADDRESS_2, EFFECTIVE DATE, etc.) don't win by accident.
 function scoreWithAliases(canonNorm, targetNorm) {
-  let best = scoreMatch(canonNorm, targetNorm);
+  let best = { ...scoreMatch(canonNorm, targetNorm), alias: null };
   const aliases = HEADER_ALIASES[canonNorm];
   if (aliases) {
     for (const alias of aliases) {
       const r = scoreMatch(normalizeKey(alias), targetNorm);
-      if (r.score > best.score) best = { score: r.score, reason: `alias:${alias}` };
+      // Keep a STABLE reason enum ('alias') so the UI's automation whitelist
+      // never silently drops these; expose the matched phrase separately for
+      // display only. Never return dynamic reason strings the frontend can't
+      // recognize.
+      if (r.score > best.score) best = { score: r.score, reason: 'alias', alias };
     }
   }
   // Context-token gating for fields that share generic words across the form.
@@ -328,8 +332,8 @@ function smartSuggestMappings(sourceHeaders, targetFields) {
     let best = null;
     for (const t of targetNorm) {
       if (usedTargets.has(t.name)) continue;
-      const { score, reason } = scoreWithAliases(s.norm, t.norm);
-      if (!best || score > best.score) best = { source: s.original, target: t.name, score, reason };
+      const { score, reason, alias } = scoreWithAliases(s.norm, t.norm);
+      if (!best || score > best.score) best = { source: s.original, target: t.name, score, reason, alias };
     }
     if (best && best.score >= 0.7) {
       suggestions.push(best);
@@ -342,8 +346,8 @@ function smartSuggestMappings(sourceHeaders, targetFields) {
     let best = null;
     for (const t of targetNorm) {
       if (usedTargets.has(t.name)) continue;
-      const { score, reason } = scoreWithAliases(s.norm, t.norm);
-      if (!best || score > best.score) best = { source: s.original, target: t.name, score, reason };
+      const { score, reason, alias } = scoreWithAliases(s.norm, t.norm);
+      if (!best || score > best.score) best = { source: s.original, target: t.name, score, reason, alias };
     }
     if (best && best.score >= 0.55) {
       suggestions.push(best);

@@ -327,9 +327,9 @@
     });
 
     const confidenceTag = (s) => {
-      if (s.reason === 'exact') return `<span class="tag tag-auto">Auto</span>`;
-      if (s.reason === 'fuzzy' || s.reason === 'contains') return `<span class="tag tag-suggest">Suggested</span>`;
-      return `<span class="tag tag-weak">Weak</span>`;
+      if (s.needsReview || s.score < 0.55) return `<span class="tag tag-weak">Weak</span>`;
+      if (s.score >= 0.85) return `<span class="tag tag-auto">Auto</span>`;
+      return `<span class="tag tag-suggest">Suggested</span>`;
     };
     const confidencePct = (s) => Math.round((s.score || 0) * 100) + '%';
 
@@ -352,7 +352,10 @@
     document.getElementById('acceptAutoBtn').addEventListener('click', () => {
       state.mapping = {};
       for (const s of state.suggestions) {
-        if (s.reason === 'exact' || s.reason === 'fuzzy' || s.reason === 'pattern') state.mapping[s.target] = s.source;
+        // Drive automation off CONFIDENCE, not brittle reason strings. Any
+        // suggestion not flagged for review and >=0.7 is a confident match
+        // (covers exact, fuzzy, contains, pattern, and alias matches alike).
+        if (!s.needsReview && (s.score || 0) >= 0.7) state.mapping[s.target] = s.source;
       }
       showToast(`Accepted ${Object.keys(state.mapping).length} matches`);
       renderMapping(state.suggestions);
