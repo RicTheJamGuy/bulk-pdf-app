@@ -306,16 +306,109 @@ function detectYesNoPairs(fields) {
   return { pairs, handledNames: used };
 }
 
-function buildTemplateSpec(form) {
+// Visual sort key from a field's earliest widget rectangle, so Excel columns
+// follow the order fields appear on the FORM (page -> top-to-bottom ->
+// left-to-right) rather than AcroForm internal field order.
+function resolveWidgetPageIndex(widget, pageIndexByObj, pageIndexByRefKey) {
+  try {
+    // Prefer identifying the widget itself against the per-page annotation maps
+    // (most reliable); only then fall back to pdf-lib's flaky widget.P().
+    if (pageIndexByObj.has(widget)) return pageIndexByObj.get(widget);
+    if (widget.dict && pageIndexByObj.has(widget.dict)) return pageIndexByObj.get(widget.dict);
+
+    const widgetRef = widget.ref || widget.dict?.ref;
+    if (widgetRef != null) {
+      const byWidgetRef = pageIndexByRefKey.get(String(widgetRef));
+      if (byWidgetRef != null) return byWidgetRef;
+    }
+
+    const pObj = widget.P?.();
+    if (pObj != null) {
+      if (pageIndexByObj.has(pObj)) return pageIndexByObj.get(pObj);
+      if (pObj.ref != null) {
+        const byPageRef = pageIndexByRefKey.get(String(pObj.ref));
+        if (byPageRef != null) return byPageRef;
+      }
+      const direct = pageIndexByRefKey.get(String(pObj));
+      if (direct != null) return direct;
+    }
+  } catch { /* ignore */ }
+  return -1;
+}
+
+function visualKeyForField(field, fallbackIndex, pageIndexByObj, pageIndexByRefKey) {
+  let best = null;
+  try {
+    const widgets = field.acroField?.getWidgets?.() || [];
+    for (const w of widgets) {
+      let rect;
+      try { rect = w.getRectangle(); } catch { continue; }
+      if (!rect) continue;
+      const page = resolveWidgetPageIndex(w, pageIndexByObj, pageIndexByRefKey);
+      // Without a resolved page we cannot trust cross-page rect ordering, so
+      // skip this widget rather than mixing pages by raw Y/X.
+      if (page < 0) continue;
+      const top = rect.y + rect.height; // PDF origin is bottom-left; higher y = higher on page
+      const cand = { page, top, x: rect.x, y: rect.y, fallback: fallbackIndex, resolved: true };
+      if (!best || compareVisualKeys(cand, best) < 0) best = cand;
+    }
+  } catch { /* fall through to fallback */ }
+  // No resolvable widget/page: sort AFTER positioned fields, preserving the
+  // original PDF field order among such fallbacks.
+  return best || { page: Number.MAX_SAFE_INTEGER, top: 0, x: 0, y: 0, fallback: fallbackIndex, resolved: false };
+}
+
+const ROW_TOLERANCE = 5; // PDF points; fields within this vertical band = same row
+function compareVisualKeys(a, b) {
+  if (a.page !== b.page) return a.page - b.page;
+  if (Math.abs(a.top - b.top) > ROW_TOLERANCE) return b.top - a.top; // higher first
+  if (a.x !== b.x) return a.x - b.x; // same row: left to right
+  return a.fallback - b.fallback; // stable tie-break
+}
+
+function minVisualKey(a, b) {
+  if (!a) return b;
+  if (!b) return a;
+  return compareVisualKeys(a, b) <= 0 ? a : b;
+}
+
+function buildTemplateSpec(pdfDoc, form) {
   const fields = form.getFields();
+
+  // Map pages -> index via BOTH the page dict object and stringified refs.
+  // widget.P() is not always populated depending on the PDF, so we ALSO map
+  // every annotation ref on each page to that page index — the most robust way
+  // to place a widget on its page.
+  const pageIndexByObj = new Map();
+  const pageIndexByRefKey = new Map();
+  pdfDoc.getPages().forEach((p, i) => {
+    if (p.node) pageIndexByObj.set(p.node, i);
+    if (p.ref) pageIndexByRefKey.set(String(p.ref), i);
+    try {
+      const annots = p.node?.Annots?.();
+      if (annots) {
+        for (let a = 0; a < annots.size(); a++) {
+          const annotRef = annots.get(a);
+          pageIndexByRefKey.set(String(annotRef), i);
+          const annotObj = pdfDoc.context.lookup(annotRef);
+          if (annotObj) pageIndexByObj.set(annotObj, i);
+        }
+      }
+    } catch { /* best effort */ }
+  });
+
+  // Precompute a visual key per field (by name) and original index.
+  const keyByName = new Map();
+  fields.forEach((f, i) => {
+    const nm = f.getName();
+    keyByName.set(nm, visualKeyForField(f, i, pageIndexByObj, pageIndexByRefKey));
+  });
 
   // Safe proximity-aware Yes/No pairing (handles repeated base labels).
   const { pairs, handledNames } = detectYesNoPairs(fields);
-  const cbHandled = new Set(handledNames);
   const pairByName = new Map();
   for (const p of pairs) { pairByName.set(p.yes, p); pairByName.set(p.no, p); }
 
-  const columns = [];   // { header, kind, fieldName?, yesFieldName?, noFieldName? }
   const usedHeaders = new Set();
   const uniqueHeader = (base) => {
     let h = base, i = 2;
@@ -324,9 +417,10 @@ function buildTemplateSpec(form) {
     return h;
   };
 
-  // Walk fields in ORIGINAL PDF order. When we reach the first member of a
-  // Yes/No pair, emit the single collapsed column there; skip the second member.
-  // This keeps the Excel template's column order aligned with the form.
+  // Build provisional column specs (baseHeader + sortKey), WITHOUT unique
+  // headers yet — headers must be assigned AFTER sorting so (2) suffixes follow
+  // visual order.
+  const pending = [];
   const emittedPairs = new Set();
   for (const f of fields) {
     const name = f.getName();
@@ -335,21 +429,33 @@ function buildTemplateSpec(form) {
       const key = `${pair.yes}||${pair.no}`;
       if (!emittedPairs.has(key)) {
         emittedPairs.add(key);
-        columns.push({
-          header: uniqueHeader(`${pair.base} (Yes/No)`),
+        pending.push({
+          baseHeader: `${pair.base} (Yes/No)`,
           kind: 'yesno',
           yesFieldName: pair.yes,
           noFieldName: pair.no,
+          // Collapsed pair sits at the earlier of its two widgets.
+          sortKey: minVisualKey(keyByName.get(pair.yes), keyByName.get(pair.no)),
         });
       }
       continue;
     }
     if (f.constructor?.name === 'PDFCheckBox') {
-      columns.push({ header: uniqueHeader(`${name} (Checked?)`), kind: 'checkbox', fieldName: name });
+      pending.push({ baseHeader: `${name} (Checked?)`, kind: 'checkbox', fieldName: name, sortKey: keyByName.get(name) });
     } else {
-      columns.push({ header: uniqueHeader(name), kind: 'field', fieldName: name });
+      pending.push({ baseHeader: name, kind: 'field', fieldName: name, sortKey: keyByName.get(name) });
     }
   }
+
+  // Sort by visual position, then assign unique headers in that final order.
+  pending.sort((a, b) => compareVisualKeys(a.sortKey, b.sortKey));
+
+  const columns = pending.map((c) => {
+    const base = { header: uniqueHeader(c.baseHeader), kind: c.kind };
+    if (c.kind === 'yesno') { base.yesFieldName = c.yesFieldName; base.noFieldName = c.noFieldName; }
+    else base.fieldName = c.fieldName;
+    return base;
+  });
 
   return { columns, pairCount: pairs.length, fieldCount: fields.length };
 }
@@ -634,7 +740,7 @@ app.post('/api/pdf/template-xlsx', upload.single('pdf'), async (req, res) => {
     const bytes = await fs.readFile(req.file.path);
     const pdfDoc = await PDFDocument.load(bytes);
     const form = pdfDoc.getForm();
-    const spec = buildTemplateSpec(form);
+    const spec = buildTemplateSpec(pdfDoc, form);
 
     if (!spec.columns.length) {
       await fs.unlink(req.file.path).catch(() => undefined);
