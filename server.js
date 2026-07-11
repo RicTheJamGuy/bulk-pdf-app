@@ -61,8 +61,43 @@ async function readJsonSafe(filePath) {
 }
 
 function normalizeKey(key) {
-  return String(key ?? '').trim().toLowerCase().replace(/[\s_-]+/g, ' ').replace(/[^a-z0-9 ]/g, '').trim();
+  // Collapse every run of non-alphanumerics (slash, underscore, dash, dot,
+  // whitespace) to a single space. Critically this keeps "Malpractice/Liability"
+  // as two tokens instead of gluing it into "malpracticeliability".
+  return String(key ?? '').trim().toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
 }
+
+// Repair common source-header defects (typos, glued words, abbreviations)
+// BEFORE normalization so credentialing terms tokenize correctly.
+function canonicalizeHeader(raw) {
+  let s = ' ' + String(raw ?? '').toLowerCase() + ' ';
+  s = s
+    .replace(/certificatin/g, 'certification')          // typo: missing 'o'
+    .replace(/certification\s*expiration/g, 'certification expiration')
+    .replace(/certification\s*effective/g, 'certification effective')
+    .replace(/([a-z])expiration/g, '$1 expiration')      // glued: ...CertificationExpiration
+    .replace(/([a-z])effective/g, '$1 effective');
+  return normalizeKey(s);
+}
+
+// Healthcare credentialing synonym expansion. Each canonical source key maps to
+// alias phrases; the matcher scores every alias against each PDF field and keeps
+// the best. Aliases carry the distinctive context tokens (e.g. "individual",
+// "group", "board") so generic repeated PDF fields don't win by accident.
+const HEADER_ALIASES = {
+  'zip': ['zip', 'zip code', 'postal code'],
+  'practice name': ['practice name', 'group corporate name as it appears on irs w9', 'group name', 'corporate name', 'organization name', 'facility name', 'business name'],
+  'tax id': ['tax id', 'tax id number', 'tax identification number', 'federal tax id', 'tin', 'ein', 'employer identification number'],
+  'malpractice liability': ['malpractice liability', 'professional liability', 'malpractice insurance', 'liability insurance', 'malpractice policy', 'liability policy number'],
+  'individual npi': ['individual npi', 'individual national provider identifier', 'type 1 npi', 'provider npi', 'npi number'],
+  'group npi': ['group npi', 'group national provider identifier', 'type 2 npi', 'organization npi', 'billing npi'],
+  'caqh': ['caqh', 'caqh id', 'caqh provider id', 'caqh number'],
+  'medicare provider number': ['medicare provider number', 'medicare number', 'medicare id', 'ptan', 'participating medicare provider'],
+  'medicaid provider number': ['medicaid provider number', 'medicaid number', 'medicaid id', 'site specific medicaid number', 'tpi'],
+  'board certification number': ['board certification number', 'board certificate number', 'certification number', 'certificate number'],
+  'board certification effective date': ['board certification effective date', 'board effective date', 'certification effective date', 'board date effective'],
+  'board certification expiration date': ['board certification expiration date', 'board expiration date', 'certification expiration date', 'board date expiration'],
+};
 
 function levenshtein(a, b) {
   const an = a.length, bn = b.length;
@@ -168,9 +203,17 @@ async function parseDataFile(filePath) {
     return { headers, rows: records };
   }
   if (ext === '.xlsx' || ext === '.xls') {
-    const workbook = XLSX.readFile(filePath);
+    const workbook = XLSX.readFile(filePath, { cellDates: true });
     const sheet = workbook.Sheets[workbook.SheetNames[0]];
-    const data = XLSX.utils.sheet_to_json(sheet);
+    // raw:false + dateNF renders Excel date serials as mm/dd/yyyy instead of
+    // leaking numbers like 39700. defval keeps blank cells as ''.
+    const data = XLSX.utils.sheet_to_json(sheet, { defval: '', raw: false, dateNF: 'mm/dd/yyyy' });
+    // Trim stray whitespace (e.g. Medicare number stored with trailing spaces).
+    for (const row of data) {
+      for (const k of Object.keys(row)) {
+        if (typeof row[k] === 'string') row[k] = row[k].trim();
+      }
+    }
     const headers = data.length ? Object.keys(data[0]) : [];
     return { headers, rows: data };
   }
@@ -245,8 +288,38 @@ function scoreMatch(sourceNorm, targetNorm) {
   return { score: adjusted, reason: adjusted > 0.55 ? 'suggested' : 'weak' };
 }
 
+// Score a source header against a target field, expanding through credentialing
+// aliases and requiring distinctive context tokens so generic repeated PDF
+// fields (ADDRESS_2, EFFECTIVE DATE, etc.) don't win by accident.
+function scoreWithAliases(canonNorm, targetNorm) {
+  let best = scoreMatch(canonNorm, targetNorm);
+  const aliases = HEADER_ALIASES[canonNorm];
+  if (aliases) {
+    for (const alias of aliases) {
+      const r = scoreMatch(normalizeKey(alias), targetNorm);
+      if (r.score > best.score) best = { score: r.score, reason: `alias:${alias}` };
+    }
+  }
+  // Context-token gating for fields that share generic words across the form.
+  // If the canonical key carries a distinctive qualifier, the target must too.
+  const CONTEXT = {
+    'individual npi': ['individual', 'type 1', 'national provider identifier'],
+    'group npi': ['group', 'type 2', 'organization'],
+    'license effective date': ['license'],
+    'license expiration date': ['license'],
+    'board certification effective date': ['board', 'certif'],
+    'board certification expiration date': ['board', 'certif'],
+  };
+  const ctx = CONTEXT[canonNorm];
+  if (ctx && best.score >= 0.55) {
+    const hasCtx = ctx.some((t) => targetNorm.includes(t));
+    if (!hasCtx) best = { score: best.score * 0.45, reason: 'weak:no-context' };
+  }
+  return best;
+}
+
 function smartSuggestMappings(sourceHeaders, targetFields) {
-  const sourceNorm = sourceHeaders.map((h) => ({ original: h, norm: normalizeKey(h) }));
+  const sourceNorm = sourceHeaders.map((h) => ({ original: h, norm: canonicalizeHeader(h) }));
   const targetNorm = targetFields.map((f) => ({ ...f, norm: normalizeKey(f.name) }));
   const suggestions = [];
   const usedTargets = new Set();
@@ -255,7 +328,7 @@ function smartSuggestMappings(sourceHeaders, targetFields) {
     let best = null;
     for (const t of targetNorm) {
       if (usedTargets.has(t.name)) continue;
-      const { score, reason } = scoreMatch(s.norm, t.norm);
+      const { score, reason } = scoreWithAliases(s.norm, t.norm);
       if (!best || score > best.score) best = { source: s.original, target: t.name, score, reason };
     }
     if (best && best.score >= 0.7) {
@@ -269,7 +342,7 @@ function smartSuggestMappings(sourceHeaders, targetFields) {
     let best = null;
     for (const t of targetNorm) {
       if (usedTargets.has(t.name)) continue;
-      const { score, reason } = scoreMatch(s.norm, t.norm);
+      const { score, reason } = scoreWithAliases(s.norm, t.norm);
       if (!best || score > best.score) best = { source: s.original, target: t.name, score, reason };
     }
     if (best && best.score >= 0.55) {
