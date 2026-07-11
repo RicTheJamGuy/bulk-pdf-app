@@ -189,6 +189,27 @@
 
     <div class="divider"></div>
 
+    <!-- PDF-first: generate a blank Excel template from a fillable PDF -->
+    <section class="panel" id="templateGen" style="border-color:#0e7490;">
+      <h2>⚡ Start with a Fillable PDF</h2>
+      <p class="muted">
+        Upload a fillable PDF and download a blank Excel template whose columns are the exact PDF field names.
+        Fill out the spreadsheet, then use it with this same PDF below — mapping becomes instant and exact.
+      </p>
+      <div class="row">
+        <div class="col">
+          <label>Fillable PDF</label>
+          <input id="templatePdfInput" type="file" accept="application/pdf,.pdf" />
+        </div>
+        <div class="col" style="align-self:end;">
+          <button id="generateTemplateBtn" class="primary">Generate Blank Excel Template</button>
+        </div>
+      </div>
+      <p id="templateStatus" class="muted" style="margin-top:8px;"></p>
+    </section>
+
+    <div class="divider"></div>
+
     <!-- Step 1 -->
     <section class="panel" id="step1">
       <h2>Step 1 — Upload PDF template</h2>
@@ -312,6 +333,44 @@
         }
         updateUIState();
       } catch (e) { showToast(e.message); }
+    });
+
+    document.getElementById('generateTemplateBtn').addEventListener('click', async () => {
+      const file = document.getElementById('templatePdfInput').files[0];
+      if (!file) return showToast('Upload a fillable PDF first');
+      const btn = document.getElementById('generateTemplateBtn');
+      const status = document.getElementById('templateStatus');
+      try {
+        btn.disabled = true;
+        status.textContent = 'Generating Excel template...';
+        const fd = new FormData();
+        fd.append('pdf', file);
+        const res = await fetch(API + '/api/pdf/template-xlsx', { method: 'POST', body: fd });
+        if (!res.ok) {
+          // Endpoint returned JSON error — never download that as .xlsx.
+          let message = 'Failed to generate Excel template';
+          try { const json = await res.json(); message = json.error || message; } catch {}
+          throw new Error(message);
+        }
+        const count = res.headers.get('X-Field-Count');
+        const blob = await res.blob();
+        let filename = 'pdf-fields-template.xlsx';
+        const disposition = res.headers.get('Content-Disposition') || '';
+        const match = disposition.match(/filename="?([^"]+)"?/i);
+        if (match) filename = match[1];
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url; a.download = filename;
+        document.body.appendChild(a); a.click(); a.remove();
+        URL.revokeObjectURL(url);
+        status.textContent = `Template downloaded${count ? ` (${count} field columns)` : ''}.`;
+        showToast('Blank Excel template generated');
+      } catch (e) {
+        status.textContent = '';
+        showToast(e.message);
+      } finally {
+        btn.disabled = false;
+      }
     });
 
     document.getElementById('dataInput').addEventListener('change', async () => {
