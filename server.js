@@ -6,6 +6,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { PDFDocument, rgb } from 'pdf-lib';
 import XLSX from 'xlsx';
+import ExcelJS from 'exceljs';
 import { parse } from 'csv-parse/sync';
 import archiver from 'archiver';
 import { nanoid } from 'nanoid';
@@ -28,7 +29,7 @@ if (allowedOrigins.length) {
     }
   }));
 }
-app.use(express.json());
+app.use(express.json({ limit: '10mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
 
 const UPLOAD_DIR = path.join(__dirname, 'data', 'uploads');
@@ -187,6 +188,172 @@ async function parsePdfFormFields(filePath) {
   return fields;
 }
 
+const FIELD_MAP_SHEET = '__PDF_FIELD_MAP';
+
+// Detects an ACTUAL checkbox field whose name ends in a Yes/No suffix, e.g.
+// "BOARD CERTIFIED Yes_44" -> { base: "BOARD CERTIFIED", answer: "yes" }.
+// Only ever call this on PDFCheckBox fields — never on text fields that merely
+// contain the words yes/no.
+function parseYesNoCheckboxName(name) {
+  const m = String(name).match(/^(.*?)(?:[\s_-]+)(Yes|No)(?:[_\s-]*\d+)?$/i);
+  if (!m) return null;
+  return { base: m[1].trim().replace(/\s+/g, ' '), answer: m[2].toLowerCase() };
+}
+
+function normalizeYesNo(value) {
+  const v = String(value ?? '').trim().toLowerCase();
+  if (['yes', 'y', 'true', '1', 'checked', 'check', 'x', '☑', '✓'].includes(v)) return 'yes';
+  if (['no', 'n', 'false', '0', 'unchecked', 'off', '☐'].includes(v)) return 'no';
+  return '';
+}
+
+function isTruthyCheckbox(value) {
+  return ['yes', 'y', 'true', '1', 'checked', 'check', 'x', '☑', '✓'].includes(
+    String(value ?? '').trim().toLowerCase()
+  );
+}
+
+// Decides what to do with a checkbox given a cell value and the TARGET PDF
+// field name. Field-awareness matters: a literal "No" mapped onto a field whose
+// own name is the No-side ("... No_45") should CHECK that box, whereas "No" on a
+// standalone logical checkbox means leave it unchecked. Empty => no action.
+function checkboxAction(value, pdfFieldName = '') {
+  const v = String(value ?? '').trim().toLowerCase();
+  if (!v) return null;
+
+  const target = parseYesNoCheckboxName(pdfFieldName);
+  const literalAnswer = ['yes', 'y'].includes(v) ? 'yes' : (['no', 'n'].includes(v) ? 'no' : '');
+
+  // Literal Yes/No aimed at one side of a Yes/No checkbox pair: check the box
+  // only when the answer matches that box's own side.
+  if (target && literalAnswer) {
+    return literalAnswer === target.answer ? 'check' : 'uncheck';
+  }
+
+  if (['no', 'n', 'false', '0', 'unchecked', 'off', 'blank', 'none', '☐'].includes(v)) return 'uncheck';
+  return 'check';
+}
+
+// Builds the template spec from a fillable PDF: a list of VISIBLE Excel columns
+// plus the hidden mapping rows that let us expand each visible answer back into
+// exact PDF field name(s) at import time. This is the contract that keeps the
+// fill/export round-trip deterministic after collapsing checkbox pairs.
+function trailingNumber(name) {
+  const m = String(name).match(/_+\s*(\d+)\s*$/);
+  return m ? Number(m[1]) : null;
+}
+
+function normalizeCheckboxBase(base) {
+  return String(base || '')
+    .toLowerCase()
+    .replace(/[?.,:;()\[\]{}]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+// Pairs Yes/No checkboxes SAFELY even when the same base label repeats across
+// sections. Base-only grouping is unsafe here (this PDF repeats labels like
+// "BOARD CERTIFIED"), so we pair by same normalized base + nearest opposite
+// answer using trailing-suffix proximity then field-order proximity. Ambiguous
+// checkboxes are left standalone rather than mis-paired.
+function detectYesNoPairs(fields) {
+  const infos = fields
+    .map((f, fieldIndex) => ({ f, fieldIndex, name: f.getName(), type: f.constructor?.name }))
+    .filter((x) => x.type === 'PDFCheckBox')
+    .map((x, cbIndex) => {
+      const p = parseYesNoCheckboxName(x.name);
+      return p ? { ...x, cbIndex, base: p.base, normBase: normalizeCheckboxBase(p.base), answer: p.answer, suffix: trailingNumber(x.name) } : null;
+    })
+    .filter(Boolean);
+
+  const candidates = [];
+  for (let i = 0; i < infos.length; i++) {
+    for (let j = i + 1; j < infos.length; j++) {
+      const a = infos[i], b = infos[j];
+      if (a.normBase !== b.normBase || a.answer === b.answer) continue;
+      const suffixDist = a.suffix != null && b.suffix != null ? Math.abs(a.suffix - b.suffix) : 9999;
+      const orderDist = Math.abs(a.cbIndex - b.cbIndex);
+      // Suffix proximity is the strong signal. When BOTH sides carry a trailing
+      // number, require the suffixes to be close (prevents pairing repeated
+      // labels across sections). Fall back to field-order proximity only when a
+      // suffix is missing on one/both sides.
+      const bothHaveSuffix = a.suffix != null && b.suffix != null;
+      // Credentialing forms: a wrong checkbox is far worse than an extra
+      // standalone column. When both sides carry a trailing number, demand
+      // adjacency (dist <= 1). Only fall back to field-order proximity when a
+      // suffix is missing. Anything looser stays standalone.
+      const clearlyPaired = bothHaveSuffix ? suffixDist <= 1 : orderDist <= 3;
+      if (clearlyPaired) {
+        candidates.push({
+          yes: a.answer === 'yes' ? a : b,
+          no: a.answer === 'no' ? a : b,
+          base: a.answer === 'yes' ? a.base : b.base,
+          score: suffixDist * 10 + orderDist,
+        });
+      }
+    }
+  }
+  // Greedy: best (lowest) scores first, each checkbox used at most once.
+  candidates.sort((x, y) => x.score - y.score);
+  const used = new Set();
+  const pairs = [];
+  for (const c of candidates) {
+    if (used.has(c.yes.name) || used.has(c.no.name)) continue;
+    used.add(c.yes.name);
+    used.add(c.no.name);
+    pairs.push({ base: c.base, yes: c.yes.name, no: c.no.name });
+  }
+  return { pairs, handledNames: used };
+}
+
+function buildTemplateSpec(form) {
+  const fields = form.getFields();
+
+  // Safe proximity-aware Yes/No pairing (handles repeated base labels).
+  const { pairs, handledNames } = detectYesNoPairs(fields);
+  const cbHandled = new Set(handledNames);
+  const pairByName = new Map();
+  for (const p of pairs) { pairByName.set(p.yes, p); pairByName.set(p.no, p); }
+
+  const columns = [];   // { header, kind, fieldName?, yesFieldName?, noFieldName? }
+  const usedHeaders = new Set();
+  const uniqueHeader = (base) => {
+    let h = base, i = 2;
+    while (usedHeaders.has(h.toLowerCase())) h = `${base} (${i++})`;
+    usedHeaders.add(h.toLowerCase());
+    return h;
+  };
+
+  // Walk fields in ORIGINAL PDF order. When we reach the first member of a
+  // Yes/No pair, emit the single collapsed column there; skip the second member.
+  // This keeps the Excel template's column order aligned with the form.
+  const emittedPairs = new Set();
+  for (const f of fields) {
+    const name = f.getName();
+    const pair = pairByName.get(name);
+    if (pair) {
+      const key = `${pair.yes}||${pair.no}`;
+      if (!emittedPairs.has(key)) {
+        emittedPairs.add(key);
+        columns.push({
+          header: uniqueHeader(`${pair.base} (Yes/No)`),
+          kind: 'yesno',
+          yesFieldName: pair.yes,
+          noFieldName: pair.no,
+        });
+      }
+      continue;
+    }
+    if (f.constructor?.name === 'PDFCheckBox') {
+      columns.push({ header: uniqueHeader(`${name} (Checked?)`), kind: 'checkbox', fieldName: name });
+    } else {
+      columns.push({ header: uniqueHeader(name), kind: 'field', fieldName: name });
+    }
+  }
+
+  return { columns, pairCount: pairs.length, fieldCount: fields.length };
+}
+
 async function parseDataFile(filePath) {
   const ext = path.extname(filePath).toLowerCase();
   if (ext === '.csv') {
@@ -204,21 +371,77 @@ async function parseDataFile(filePath) {
   }
   if (ext === '.xlsx' || ext === '.xls') {
     const workbook = XLSX.readFile(filePath, { cellDates: true });
-    const sheet = workbook.Sheets[workbook.SheetNames[0]];
+    const dataSheet = workbook.Sheets[workbook.SheetNames[0]];
     // Extract headers from row 1 INDEPENDENTLY of data rows, so a header-only
     // template (generated by /api/pdf/template-xlsx) still reports its columns
     // instead of looking empty.
-    const headerRows = XLSX.utils.sheet_to_json(sheet, { header: 1, blankrows: false, raw: false, defval: '' });
+    const headerRows = XLSX.utils.sheet_to_json(dataSheet, { header: 1, blankrows: false, raw: false, defval: '' });
     const headers = (headerRows[0] || []).map((h) => String(h ?? '').trim()).filter(Boolean);
     // raw:false + dateNF renders Excel date serials as mm/dd/yyyy instead of
     // leaking numbers like 39700. defval keeps blank cells as ''.
-    const data = XLSX.utils.sheet_to_json(sheet, { defval: '', raw: false, dateNF: 'mm/dd/yyyy' });
+    const data = XLSX.utils.sheet_to_json(dataSheet, { defval: '', raw: false, dateNF: 'mm/dd/yyyy' });
     // Trim stray whitespace (e.g. Medicare number stored with trailing spaces).
     for (const row of data) {
       for (const k of Object.keys(row)) {
         if (typeof row[k] === 'string') row[k] = row[k].trim();
       }
     }
+
+    // If this workbook was generated by our PDF-first flow, expand each visible
+    // logical column back into exact PDF field name(s) so the downstream
+    // mapping/fill logic sees real field names and stays deterministic.
+    if (workbook.SheetNames.includes(FIELD_MAP_SHEET)) {
+      const mapRows = XLSX.utils.sheet_to_json(workbook.Sheets[FIELD_MAP_SHEET], { defval: '' });
+      const specByHeader = new Map();
+      for (const r of mapRows) {
+        const h = String(r.columnHeader ?? '').trim();
+        if (h) specByHeader.set(h, r);
+      }
+
+      const expandedHeaders = [];
+      const seen = new Set();
+      const pushHeader = (name) => { if (name && !seen.has(name)) { seen.add(name); expandedHeaders.push(name); } };
+
+      const expandRow = (row) => {
+        const out = {};
+        for (const [visibleHeader, spec] of specByHeader.entries()) {
+          const raw = row[visibleHeader];
+          const kind = String(spec.kind || 'field');
+          if (kind === 'yesno') {
+            const answer = normalizeYesNo(raw);
+            // Field-neutral control markers: checkboxAction() maps 'checked' ->
+            // check and 'unchecked' -> uncheck regardless of the target field's
+            // own Yes/No side. Never emit 'Yes' here — field-aware checkboxAction
+            // would misread a 'Yes' aimed at a No-side field as an uncheck.
+            if (answer === 'yes') {
+              out[spec.yesFieldName] = 'checked';
+              out[spec.noFieldName] = 'unchecked';
+            } else if (answer === 'no') {
+              out[spec.yesFieldName] = 'unchecked';
+              out[spec.noFieldName] = 'checked';
+            } else {
+              out[spec.yesFieldName] = '';
+              out[spec.noFieldName] = '';
+            }
+          } else if (kind === 'checkbox') {
+            out[spec.fieldName] = isTruthyCheckbox(raw) ? 'checked' : (String(raw ?? '').trim() ? 'unchecked' : '');
+          } else {
+            out[spec.fieldName] = raw ?? '';
+          }
+        }
+        return out;
+      };
+
+      // Build expanded header order from the spec (data-independent).
+      for (const spec of specByHeader.values()) {
+        if (String(spec.kind) === 'yesno') { pushHeader(spec.yesFieldName); pushHeader(spec.noFieldName); }
+        else pushHeader(spec.fieldName);
+      }
+
+      const expandedRows = data.map(expandRow);
+      return { headers: expandedHeaders, rows: expandedRows };
+    }
+
     return { headers: headers.length ? headers : (data.length ? Object.keys(data[0]) : []), rows: data };
   }
   throw new Error('Unsupported data file format');
@@ -401,33 +624,96 @@ app.post('/api/upload/pdf', upload.single('pdf'), async (req, res) => {
   }
 });
 
-// PDF-first flow: upload a fillable PDF, get back a blank .xlsx whose column
-// headers are the EXACT PDF field names. Filling this sheet makes downstream
-// mapping deterministic (headers == field names => exact matches).
+// PDF-first flow: upload a fillable PDF, get back a blank .xlsx. Checkbox
+// Yes/No pairs are condensed to ONE column each; a hidden __PDF_FIELD_MAP sheet
+// records how each visible column expands back to exact PDF field name(s) so
+// the fill/export round-trip stays deterministic.
 app.post('/api/pdf/template-xlsx', upload.single('pdf'), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'PDF file is required' });
   try {
     const bytes = await fs.readFile(req.file.path);
     const pdfDoc = await PDFDocument.load(bytes);
-    const fieldNames = pdfDoc.getForm().getFields().map((f) => f.getName());
+    const form = pdfDoc.getForm();
+    const spec = buildTemplateSpec(form);
 
-    if (!fieldNames.length) {
+    if (!spec.columns.length) {
       await fs.unlink(req.file.path).catch(() => undefined);
       return res.status(400).json({ error: 'No fillable fields found in this PDF.' });
     }
-    if (fieldNames.length > 16384) {
+    if (spec.columns.length > 16384) {
       await fs.unlink(req.file.path).catch(() => undefined);
-      return res.status(400).json({ error: `This PDF has ${fieldNames.length} fields, exceeding Excel's 16,384 column limit.` });
+      return res.status(400).json({ error: `This PDF maps to ${spec.columns.length} columns, exceeding Excel's 16,384 column limit.` });
     }
 
-    // aoa_to_sheet preserves exact field names (incl. slashes, duplicates,
-    // punctuation). Never use json_to_sheet here — it would key on names and
-    // mangle the whole point of exact round-tripping.
-    const ws = XLSX.utils.aoa_to_sheet([fieldNames]);
-    ws['!cols'] = fieldNames.map((name) => ({ wch: Math.min(Math.max(String(name).length + 2, 12), 60) }));
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, 'PDF Fields Template');
-    const buffer = XLSX.write(wb, { bookType: 'xlsx', type: 'buffer' });
+    // Visible data sheet: one header row of logical column names.
+    const headers = spec.columns.map((c) => c.header);
+
+    const excelCol = (n) => {
+      let s = '';
+      while (n > 0) {
+        const m = (n - 1) % 26;
+        s = String.fromCharCode(65 + m) + s;
+        n = Math.floor((n - 1) / 26);
+      }
+      return s;
+    };
+
+    const wb = new ExcelJS.Workbook();
+    wb.creator = 'Bulk PDF App';
+    wb.created = new Date();
+
+    const ws = wb.addWorksheet('PDF Fields Template', {
+      views: [{ state: 'frozen', ySplit: 1 }],
+    });
+
+    ws.addRow(headers);
+    ws.getRow(1).font = { bold: true };
+    ws.getRow(1).alignment = { vertical: 'middle', wrapText: true };
+
+    headers.forEach((h, idx) => {
+      ws.getColumn(idx + 1).width = Math.min(Math.max(String(h).length + 2, 12), 60);
+    });
+
+    ws.autoFilter = {
+      from: { row: 1, column: 1 },
+      to: { row: 1, column: headers.length },
+    };
+
+    // Checkbox-derived columns get a Yes/No dropdown (data validation) instead
+    // of a raw text cell, so coordinators pick a value rather than type one.
+    const yesNoValidation = {
+      type: 'list',
+      allowBlank: true,
+      formulae: ['"Yes,No"'],
+      showErrorMessage: true,
+      errorStyle: 'stop',
+      errorTitle: 'Invalid checkbox value',
+      error: 'Choose Yes or No.',
+      showInputMessage: true,
+      promptTitle: 'Checkbox field',
+      prompt: 'Choose Yes or No.',
+    };
+
+    for (let i = 0; i < spec.columns.length; i++) {
+      const c = spec.columns[i];
+      if (c.kind === 'yesno' || c.kind === 'checkbox') {
+        const letter = excelCol(i + 1);
+        ws.dataValidations.add(`${letter}2:${letter}1048576`, yesNoValidation);
+      }
+    }
+
+    // Hidden metadata sheet: version + per-column expansion recipe.
+    const mapRows = [['version', 'columnHeader', 'kind', 'fieldName', 'yesFieldName', 'noFieldName']];
+    for (const c of spec.columns) {
+      mapRows.push([1, c.header, c.kind, c.fieldName || '', c.yesFieldName || '', c.noFieldName || '']);
+    }
+
+    const wsMap = wb.addWorksheet(FIELD_MAP_SHEET);
+    wsMap.addRows(mapRows);
+    wsMap.state = 'hidden';
+    wsMap.getRow(1).font = { bold: true };
+
+    const buffer = Buffer.from(await wb.xlsx.writeBuffer());
 
     const base = path.basename(req.file.originalname, path.extname(req.file.originalname))
       .replace(/[^a-z0-9_-]+/gi, '_').slice(0, 80);
@@ -435,7 +721,9 @@ app.post('/api/pdf/template-xlsx', upload.single('pdf'), async (req, res) => {
 
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.setHeader('Content-Disposition', `attachment; filename="${base || 'pdf'}-fields-template.xlsx"`);
-    res.setHeader('X-Field-Count', String(fieldNames.length));
+    res.setHeader('X-Field-Count', String(spec.fieldCount));
+    res.setHeader('X-Column-Count', String(spec.columns.length));
+    res.setHeader('X-Checkbox-Groups', String(spec.pairCount));
     res.send(buffer);
   } catch (err) {
     await fs.unlink(req.file.path).catch(() => undefined);
@@ -492,7 +780,9 @@ app.post('/api/preview', upload.single('pdf'), async (req, res) => {
         if (field.constructor?.name === 'PDFTextField') {
           if (value.trim()) { field.setText(value); written = true; }
         } else if (field.constructor?.name === 'PDFCheckBox') {
-          if (value.trim()) { field.check(); written = true; }
+          const action = checkboxAction(value, pdfFieldName);
+          if (action === 'check') { field.check(); written = true; }
+          else if (action === 'uncheck') { field.uncheck(); written = true; }
         } else if (field.constructor?.name === 'PDFRadioGroup') {
           try { field.select(value); } catch { field.select(value); }
           written = true;
@@ -548,7 +838,9 @@ app.post('/api/export', upload.single('pdf'), async (req, res) => {
             if (field.constructor?.name === 'PDFTextField') {
               field.setText(String(value));
             } else if (field.constructor?.name === 'PDFCheckBox') {
-              if (String(value).trim()) field.check();
+              const action = checkboxAction(value, pdfFieldName);
+              if (action === 'check') field.check();
+              else if (action === 'uncheck') field.uncheck();
             } else if (field.constructor?.name === 'PDFRadioGroup') {
               try { field.select(String(value)); } catch { /* skip */ }
             }
